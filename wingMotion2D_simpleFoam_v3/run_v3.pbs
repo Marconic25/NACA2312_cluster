@@ -1,0 +1,27 @@
+#!/bin/bash
+#PBS -N simple_v3
+#PBS -q cpu
+#PBS -l select=1:ncpus=16:mpiprocs=16
+#PBS -l walltime=2:00:00
+#PBS -j oe
+
+export PATH=$HOME/bin_of7:$PATH
+cd /work/u10677113/NACA2312/wingMotion2D_simpleFoam_v3
+
+rm -rf constant/polyMesh
+extrudeMesh 2>&1 | tee log.extrudeMesh
+createPatch -overwrite 2>&1 | tee log.createPatch
+checkMesh 2>&1 | tee log.checkMesh
+
+echo "=== Celle 2D ==="
+grep "cells:" log.checkMesh
+
+rm -rf 0; cp -r 0.orig 0
+potentialFoam 2>&1 | tee log.potentialFoam
+simpleFoam 2>&1 | tee log.simpleFoam
+postProcess -func yPlus -latestTime 2>&1 | tee log.yPlus
+
+echo "=== Risultati ==="
+grep "Cl " log.simpleFoam | tail -3
+grep "Cd " log.simpleFoam | tail -3
+cat postProcessing/yPlus/0/yPlus.dat | tail -3

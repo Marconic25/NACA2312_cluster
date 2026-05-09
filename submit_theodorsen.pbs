@@ -1,0 +1,10 @@
+#!/bin/bash
+#PBS -N THEODORSEN
+#PBS -q cpu
+#PBS -l select=1:ncpus=16:mpiprocs=16
+#PBS -l walltime=12:00:00
+#PBS -j oe
+cd /work/u10677113/NACA2312
+source my_venv/bin/activate
+export PATH=$HOME/bin_of7:$PATH
+python3 setup_theodorsen_cases.py --run 2>&1 | tee theodorsen_validation/run.log

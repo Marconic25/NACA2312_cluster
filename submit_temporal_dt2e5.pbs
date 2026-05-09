@@ -1,0 +1,13 @@
+#!/bin/bash
+#PBS -N TEMPORAL_DT2E5
+#PBS -q cpu
+#PBS -l select=1:ncpus=16:mpiprocs=16
+#PBS -l walltime=12:00:00
+#PBS -j oe
+
+cd /work/u10677113/NACA2312/temporal_dt2e5
+source /work/u10677113/NACA2312/my_venv/bin/activate
+export PATH=$HOME/bin_of7:$PATH
+rm -rf processor* cosim_state.json log.*
+find . -maxdepth 1 -name "[0-9]*" ! -name "0" ! -name "0.orig" -exec rm -rf {} +
+python3 cosim_driver.py --np 16 --window 200 --dt 2e-5 --t-end 0.5 2>&1 | tee log.temporal_dt2e5

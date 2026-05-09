@@ -1,0 +1,24 @@
+#!/bin/bash
+#PBS -N extract_cpu02
+#PBS -q cpu
+#PBS -l select=1:ncpus=4:mem=16gb
+#PBS -l walltime=6:00:00
+#PBS -j oe
+
+export PATH=$HOME/bin_of7:$PATH
+source ~/cosim_env/bin/activate
+cd /work/u10677113/NACA2312
+
+for sim_dir in /scratch_local/$USER/sim_*/; do
+    sim_name=$(basename "$sim_dir")
+    if [ -f "data/GLA/fields/${sim_name}.npy" ]; then
+        echo "SKIP $sim_name — already extracted"
+        continue
+    fi
+    echo "=== $sim_name ==="
+    python3 extract_data.py \
+        --metadata metadata.csv \
+        --sim-dir "$sim_dir" \
+        --only "$sim_name" \
+        --fields
+done

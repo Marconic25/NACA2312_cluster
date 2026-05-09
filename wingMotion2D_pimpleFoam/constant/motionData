@@ -1,0 +1,50 @@
+/*--------------------------------*- C++ -*----------------------------------*\
+| =========                 |                                                 |
+| \\      /  F ield         | OpenFOAM: The Open Source CFD Toolbox           |
+|  \\    /   O peration     | Version:  7                                     |
+|   \\  /    A nd           | Website:  https://openfoam.org                  |
+|    \\/     M anipulation  |                                                 |
+\*---------------------------------------------------------------------------*/
+FoamFile
+{
+    version     2.0;
+    format      ascii;
+    class       dictionary;
+    location    "constant";
+    object      motionData;
+}
+// * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * //
+
+h_table
+{
+    type            table;
+    values
+    (
+        (0.0    0.0)
+        //(1.0    0.05)   // Sale di 5cm in 1 secondo
+        (2.0    0.0)    // Torna a zero
+    );
+}
+
+alpha_table
+{
+    type            table;
+    values
+    (
+        (0.0    0.0)
+       // (1.0    5.0)    // Ruota di 5 gradi in 1 secondo
+        (2.0    0.0)
+    );
+}
+
+delta_table
+{
+    type            table;
+    values
+    (
+        (0.0    0.0)    // Inizio a 0 gradi
+        (0.015   0.0)    // Rimane a 0 fino a un istante prima
+        (0.025    2.0)    // A 0.1s raggiunge 2 gradi
+        (2.0    2.0)
+    );
+}

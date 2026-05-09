@@ -1,0 +1,13 @@
+#!/bin/bash
+#PBS -N GCI_STUDY
+#PBS -q cpu
+#PBS -l select=1:ncpus=16:mpiprocs=16
+#PBS -l walltime=48:00:00
+#PBS -j oe
+
+cd /work/u10677113/NACA2312
+
+# Python environment with scipy/numpy
+source /work/u10677113/NACA2312/my_venv/bin/activate
+
+python3 grid_convergence_study.py 2>&1 | tee grid_convergence/gci_output.log

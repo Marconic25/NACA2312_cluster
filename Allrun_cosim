@@ -1,0 +1,37 @@
+#!/bin/sh
+# Allrun_cosim — Fresh co-simulation start (skips blockMesh + simpleFoam).
+# Assumes wingMotion2D_simpleFoam has already been solved to steady state.
+#
+# Usage:
+#   cd /home/marco/OpenFOAM/marco-7/NACA2312
+#   ./Allrun_cosim
+#
+cd "${0%/*}" || exit
+. ${WM_PROJECT_DIR:?}/bin/tools/RunFunctions
+. ${WM_PROJECT_DIR:?}/bin/tools/CleanFunctions
+#------------------------------------------------------------------------------
+
+(
+    cd wingMotion2D_pimpleFoam || exit
+
+    cleanTimeDirectories
+    rm -rf 0 processor*
+
+    rm -rf constant/polyMesh
+
+    cp -rf \
+        ../wingMotion2D_simpleFoam/constant/polyMesh \
+        constant
+
+    cp -r 0.orig 0
+
+    runApplication -overwrite mapFields ../wingMotion2D_simpleFoam -sourceTime latestTime -consistent
+
+    mv -f 0/pointDisplacement.unmapped 0/pointDisplacement
+
+    runApplication -overwrite topoSet
+
+    python3 cosim_driver.py --np 4 --window 200 --t-end 2.0
+)
+
+#------------------------------------------------------------------------------

@@ -1,0 +1,5 @@
+// zero wing motion — diagnostic (flap-only test)
+(
+  (0.0    ((0 0 0) (0 0 0)))
+  (100.0  ((0 0 0) (0 0 0)))
+)

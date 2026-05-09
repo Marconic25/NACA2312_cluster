@@ -1,0 +1,149 @@
+--- Setup: Creating OpenFOAM wrappers ---
+
+====== Stage 1: snappyHexMesh ======
+>>> SKIP: mesh già presente in wingMotion2D_simpleFoam/constant/polyMesh
+
+====== Stage 2: simpleFoam ======
+>>> SKIP: soluzione trovata in wingMotion2D_simpleFoam/370
+>>> Source per mapFields: wingMotion2D_simpleFoam/370
+
+====== Stage 3: Co-simulation (pimpleFoam + Python) ======
+--- Running mapFields ---
+/*---------------------------------------------------------------------------*\
+  =========                 |
+  \\      /  F ield         | OpenFOAM: The Open Source CFD Toolbox
+   \\    /   O peration     | Website:  https://openfoam.org
+    \\  /    A nd           | Version:  7
+     \\/     M anipulation  |
+\*---------------------------------------------------------------------------*/
+Build  : 7-1ff648926f77
+Exec   : mapFields /work/u10677113/NACA2312/wingMotion2D_simpleFoam -sourceTime latestTime -consistent
+Date   : Mar 18 2026
+Time   : 10:39:31
+Host   : "cpu02.mate.polimi.it"
+PID    : 3074483
+I/O    : uncollated
+Case   : /work/u10677113/NACA2312/wingMotion2D_pimpleFoam
+nProcs : 1
+sigFpe : Enabling floating point exception trapping (FOAM_SIGFPE).
+fileModificationChecking : Monitoring run-time modified files using timeStampMaster (fileModificationSkew 10)
+allowSystemOperations : Allowing user-supplied system call operations
+
+// * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * //
+Source: "/work/u10677113/NACA2312" "wingMotion2D_simpleFoam"
+Target: "/work/u10677113/NACA2312" "wingMotion2D_pimpleFoam"
+
+Create databases as time
+
+
+--> FOAM FATAL ERROR: 
+cannot find file "/work/u10677113/NACA2312/wingMotion2D_simpleFoam/system/controlDict"
+
+    From function virtual Foam::autoPtr<Foam::ISstream> Foam::fileOperations::uncollatedFileOperation::readStream(Foam::regIOobject&, const Foam::fileName&, const Foam::word&, bool) const
+    in file global/fileOperations/uncollatedFileOperation/uncollatedFileOperation.C at line 538.
+
+FOAM exiting
+
+--- Running topoSet  ---
+/*---------------------------------------------------------------------------*\
+  =========                 |
+  \\      /  F ield         | OpenFOAM: The Open Source CFD Toolbox
+   \\    /   O peration     | Website:  https://openfoam.org
+    \\  /    A nd           | Version:  7
+     \\/     M anipulation  |
+\*---------------------------------------------------------------------------*/
+Build  : 7-1ff648926f77
+Exec   : topoSet
+Date   : Mar 18 2026
+Time   : 10:39:32
+Host   : "cpu02.mate.polimi.it"
+PID    : 3074706
+I/O    : uncollated
+Case   : /work/u10677113/NACA2312/wingMotion2D_pimpleFoam
+nProcs : 1
+sigFpe : Enabling floating point exception trapping (FOAM_SIGFPE).
+fileModificationChecking : Monitoring run-time modified files using timeStampMaster (fileModificationSkew 10)
+allowSystemOperations : Allowing user-supplied system call operations
+
+// * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * //
+Create time
+
+Create polyMesh for time = 0
+
+Reading topoSetDict
+
+Time = 0
+    mesh not changed.
+Created cellSet c_wing
+    Applying source boxToCell
+    Adding cells with center within boxes 1((-0.03 -0.15 0.09) (1.03 0.12 0.16))
+    cellSet c_wing now size 3280
+Created cellSet c_flap
+    Applying source boxToCell
+    Adding cells with center within boxes 1((0.755 -0.13 0.09) (1.05 0.05 0.16))
+    cellSet c_flap now size 761
+Created cellZoneSet wingZone
+    Applying source setToCellZone
+    Adding all cells from cellSet c_wing ...
+    cellZoneSet wingZone now size 3280
+Created cellZoneSet flapZone
+    Applying source setToCellZone
+    Adding all cells from cellSet c_flap ...
+    cellZoneSet flapZone now size 761
+End
+
+>>> Avvio co-simulazione...
+>>> Restart detectato: riprendendo da stato salvato...
+
+--- Restarting from t=0  window=0 ---
+    t_end=1.0s  dt=6.90e-05s
+    Restored: h=0.000mm  α=0.000°
+Co-simulation driver
+  dt=6.90e-05  window=200 steps (0.0138s)  t_end=1.0s
+  MPI procs: 16
+  Case: /work/u10677113/NACA2312/wingMotion2D_pimpleFoam
+
+============================================================
+Window 000: t = 0.00000 → 0.01380 s  (201 steps)
+  Wing state: h=0.000mm  α=0.000°
+  Flap δ: 0.00° → 0.00°
+  Running pimpleFoam -parallel (np=16)...
+  [ERROR] pimpleFoam exited with code 1
+          See /work/u10677113/NACA2312/wingMotion2D_pimpleFoam/log.pimpleFoam for details
+  [FATAL] pimpleFoam failed — stopping co-simulation
+
+====== Stage 4: Post-processing ======
+>>> Running final reconstructPar...
+/*---------------------------------------------------------------------------*\
+  =========                 |
+  \\      /  F ield         | OpenFOAM: The Open Source CFD Toolbox
+   \\    /   O peration     | Website:  https://openfoam.org
+    \\  /    A nd           | Version:  7
+     \\/     M anipulation  |
+\*---------------------------------------------------------------------------*/
+Build  : 7-1ff648926f77
+Exec   : reconstructPar
+Date   : Mar 18 2026
+Time   : 10:39:39
+Host   : "cpu02.mate.polimi.it"
+PID    : 3075227
+I/O    : uncollated
+Case   : /work/u10677113/NACA2312/wingMotion2D_pimpleFoam
+nProcs : 1
+sigFpe : Enabling floating point exception trapping (FOAM_SIGFPE).
+fileModificationChecking : Monitoring run-time modified files using timeStampMaster (fileModificationSkew 10)
+allowSystemOperations : Allowing user-supplied system call operations
+
+// * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * //
+Create time
+
+
+
+--> FOAM FATAL ERROR: 
+No processor* directories found
+
+    From function int main(int, char**)
+    in file reconstructPar.C at line 179.
+
+FOAM exiting
+

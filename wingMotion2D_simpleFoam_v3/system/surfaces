@@ -1,0 +1,42 @@
+/*--------------------------------*- C++ -*----------------------------------*\
+| =========                 |                                                 |
+| \\      /  F ield         | OpenFOAM: The Open Source CFD Toolbox           |
+|  \\    /   O peration     | Version:  7                                     |
+|   \\  /    A nd           | Website:  https://openfoam.org                  |
+|    \\/     M anipulation  |                                                 |
+\*---------------------------------------------------------------------------*/
+FoamFile
+{
+    version     2.0;
+    format      ascii;
+    class       dictionary;
+    object      surfaces;
+}
+// * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * //
+
+type            surfaces;
+libs            ("libsampling.so");
+
+surfaceFormat   raw;
+fields          (p);
+
+interpolationScheme cellPoint;
+
+surfaces
+(
+    wing_main
+    {
+        type            patch;
+        patches         (wing_main);
+        interpolate     true;
+    }
+
+    flap
+    {
+        type            patch;
+        patches         (flap);
+        interpolate     true;
+    }
+);
+
+// *** * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * //

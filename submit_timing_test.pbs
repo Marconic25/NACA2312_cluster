@@ -1,0 +1,17 @@
+#!/bin/bash
+#PBS -N TIMING_TEST
+#PBS -q cpu
+#PBS -l select=1:ncpus=16:mpiprocs=16
+#PBS -l walltime=06:00:00
+#PBS -j oe
+
+echo "START: $(date)"
+
+export PATH=$HOME/bin_of7:$PATH
+source /software/spack/share/spack/setup-env.sh
+source /work/u10677113/NACA2312/my_venv/bin/activate
+
+cd /work/u10677113/NACA2312/wingMotion2D_pimpleFoam
+python3 cosim_driver.py --np 16 --window 286 --dt 7e-5 --t-end 5.0
+
+echo "END: $(date)"

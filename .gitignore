@@ -1,0 +1,45 @@
+# === BLOCKERS (>100MB) ===
+log.pimpleFoam
+
+# === OpenFOAM time directories (tieni solo 0/ e 0.orig/) ===
+[1-9]*/
+0.[0-9]*/
+
+# === OpenFOAM runtime artifacts ===
+processor*/
+dynamicCode/
+postProcessing/
+*.foam
+log.*
+checkMesh.log
+
+# === Dataset simulazioni ===
+data/
+dataset/
+grid_convergence/
+theodorsen_validation/
+sim_A_000_train/
+
+# === Container & venv ===
+*.sif
+*.img
+my_venv/
+venv/
+__pycache__/
+*.pyc
+
+# === PBS ===
+*.o[0-9]*
+*.e[0-9]*
+
+# === Plot ===
+figures/
+*.png
+*.jpg
+
+# === Binari & tooling ===
+micro
+.claude/
+.vscode/
+.idea/
+.DS_Store

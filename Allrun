@@ -1,0 +1,177 @@
+#!/bin/bash
+
+#------------------------------------------------------------------------------
+# Allrun — NACA2312 Co-simulation
+# Stage 1 (snappyHexMesh) : skip se mesh presente in wingMotion2D_simpleFoam
+# Stage 2 (simpleFoam)    : skip se latestTime > 0 presente
+# Stage 3 (pimpleFoam)    : sempre eseguito
+#------------------------------------------------------------------------------
+
+set -e
+
+CONTAINER_ABS="/work/u10677113/of7.sif"
+WRAPPER_DIR="$HOME/bin_of7"
+WORKDIR="/work/u10677113/NACA2312"
+
+#------------------------------------------------------------------------------
+# FUNZIONI
+#------------------------------------------------------------------------------
+
+runApplication() {
+    local APP="$1"
+    shift
+    local CURRENT_DIR
+    CURRENT_DIR="$(pwd -P)"
+    echo "--- Running $APP $@ ---"
+    apptainer exec "$CONTAINER_ABS" /bin/bash -c         "source /opt/openfoam7/etc/bashrc && cd ${CURRENT_DIR} && $APP $*"         2>&1 | tee "log.$APP"
+}
+
+cleanTimeDirectories() {
+    echo "Cleaning time directories..."
+    find . -maxdepth 1 -name '[0-9]*' ! -name '0' ! -name '0.orig' -exec rm -rf {} +
+}
+
+# Ritorna la cartella numerica più alta (latestTime)
+latestTime() {
+    local DIR="${1:-.}"
+    find "$DIR" -maxdepth 1 -name '[0-9]*' ! -name '0' ! -name '0.orig' \
+        -printf '%f\n' 2>/dev/null | sort -n | tail -1
+}
+
+#------------------------------------------------------------------------------
+# SETUP WRAPPER
+#------------------------------------------------------------------------------
+
+echo "--- Setup: Creating OpenFOAM wrappers ---"
+mkdir -p "$WRAPPER_DIR"
+
+for cmd in blockMesh snappyHexMesh surfaceFeatureExtract checkMesh \
+           decomposePar pimpleFoam simpleFoam reconstructPar \
+           mapFields topoSet extrudeMesh createPatch; do
+    cat > "$WRAPPER_DIR/$cmd" << WRAPPER
+#!/bin/bash
+apptainer exec "$CONTAINER_ABS" /bin/bash -c "source /opt/openfoam7/etc/bashrc && $cmd \$*"
+WRAPPER
+    chmod +x "$WRAPPER_DIR/$cmd"
+done
+
+export PATH="$WRAPPER_DIR:$PATH"
+
+#------------------------------------------------------------------------------
+# Stage 1 — snappyHexMesh (SKIP se mesh già presente)
+#------------------------------------------------------------------------------
+
+echo ""
+echo "====== Stage 1: snappyHexMesh ======"
+
+SIMPLE_MESH="$WORKDIR/wingMotion2D_simpleFoam/constant/polyMesh/points"
+if [ -f "$SIMPLE_MESH" ]; then
+    echo ">>> SKIP: mesh già presente in wingMotion2D_simpleFoam/constant/polyMesh"
+else
+    echo ">>> Mesh non trovata, eseguo snappyHexMesh..."
+    (
+        cd "$WORKDIR/wingMotion_snappyHexMesh" || exit 1
+        runApplication blockMesh
+        runApplication surfaceFeatureExtract
+        runApplication snappyHexMesh -overwrite
+        runApplication checkMesh -latestTime
+    )
+fi
+
+#------------------------------------------------------------------------------
+# Stage 2 — simpleFoam (SKIP se latestTime > 0 trovato)
+#------------------------------------------------------------------------------
+
+echo ""
+echo "====== Stage 2: simpleFoam ======"
+
+LATEST=$(latestTime "$WORKDIR/wingMotion2D_simpleFoam")
+
+if [ -n "$LATEST" ]; then
+    echo ">>> SKIP: soluzione trovata in wingMotion2D_simpleFoam/$LATEST"
+else
+    echo ">>> Nessuna soluzione trovata, eseguo simpleFoam..."
+    (
+        cd "$WORKDIR/wingMotion2D_simpleFoam" || exit 1
+
+        # La mesh è già in constant/polyMesh, ripristina solo le IC
+        rm -rf 0
+        cp -r 0.orig 0
+
+        runApplication simpleFoam
+
+        LATEST=$(latestTime .)
+        echo ">>> simpleFoam completato. LatestTime: $LATEST"
+    )
+fi
+
+# Ri-leggi latestTime dopo eventuale esecuzione
+SIMPLE_LATEST=$(latestTime "$WORKDIR/wingMotion2D_simpleFoam")
+if [ -z "$SIMPLE_LATEST" ]; then
+    echo "ERRORE: simpleFoam non ha prodotto soluzioni. Controlla log.simpleFoam"
+    exit 1
+fi
+echo ">>> Source per mapFields: wingMotion2D_simpleFoam/$SIMPLE_LATEST"
+
+#------------------------------------------------------------------------------
+# Stage 3 — pimpleFoam + co-simulazione Python
+#------------------------------------------------------------------------------
+
+echo ""
+echo "====== Stage 3: Co-simulation (pimpleFoam + Python) ======"
+(
+    cd "$WORKDIR/wingMotion2D_pimpleFoam" || exit 1
+
+    # 1. Reset solo se fresh start
+    if [ ! -f cosim_state.json ]; then
+        rm -rf processor* 0 log.* 2>/dev/null || true
+    fi
+
+    # 2. Condizioni iniziali
+    cp -r 0.orig 0
+
+    # 3. Mappa soluzione stazionaria come IC
+echo "--- Running mapFields ---"
+	apptainer exec "$CONTAINER_ABS" /bin/bash -c \
+    "source /opt/openfoam7/etc/bashrc && \
+     cd '$WORKDIR/wingMotion2D_pimpleFoam' && \
+     mapFields '$WORKDIR/wingMotion2D_simpleFoam' -sourceTime latestTime -consistent" \
+    2>&1 | tee log.mapFields
+    # 4. Zone di movimento
+    runApplication topoSet
+
+    # 5. Rinomina pointDisplacement se necessario
+    if [ -f 0/pointDisplacement.unmapped ]; then
+        mv -f 0/pointDisplacement.unmapped 0/pointDisplacement
+        echo ">>> Rinominato: pointDisplacement.unmapped → pointDisplacement"
+    fi
+
+    # 6. Driver Python (Python 3.12 del cluster)
+    echo ">>> Avvio co-simulazione..."
+    if [ -f cosim_state.json ]; then
+        echo '>>> Restart detectato: riprendendo da stato salvato...'
+        RESTART_FLAG='--restart'
+    else
+        RESTART_FLAG=''
+    fi
+    python3 cosim_driver.py --np 16 --window 200 --t-end 1.0 $RESTART_FLAG \
+        2>&1 | tee log.cosim_driver
+)
+
+#------------------------------------------------------------------------------
+# Stage 4 — Post-processing
+#------------------------------------------------------------------------------
+
+echo ""
+echo "====== Stage 4: Post-processing ======"
+(
+    cd "$WORKDIR/wingMotion2D_pimpleFoam" || exit 1
+    echo ">>> Running final reconstructPar..."
+    apptainer exec "$CONTAINER_ABS" /bin/bash -c \
+        "source /opt/openfoam7/etc/bashrc && cd '$WORKDIR/wingMotion2D_pimpleFoam' && reconstructPar" \
+        2>&1 | tee log.reconstructPar
+    python3 plot_response.py --t-end 1.0
+)
+
+echo ""
+echo "====== All stages complete. ======"

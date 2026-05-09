@@ -1,0 +1,91 @@
+#!/bin/bash
+cd ${0%/*} || exit 1    # Vai nella directory dello script
+
+# Carica OpenFOAM
+source /opt/openfoam7/etc/bashrc
+
+echo "================================"
+echo "Running Simulation"
+echo "Current directory: $(pwd)"
+echo "================================"
+
+# Debug: mostra contenuto directory
+echo "Directory structure:"
+ls -la constant/ 2>/dev/null || echo "constant/ not found!"
+
+# Controlla che la mesh esista
+if [ ! -d "constant/polyMesh" ]; then
+    echo "ERROR: Mesh not found in constant/polyMesh!"
+    echo ""
+    echo "Current directory: $(pwd)"
+    echo "Looking for: $(pwd)/constant/polyMesh"
+    echo ""
+    echo "Options:"
+    echo "  1. Run ./Allmesh first to generate the mesh"
+    echo "  2. Make sure you're in the correct case directory"
+    echo ""
+    exit 1
+fi
+
+# Verifica che la mesh sia completa
+if [ ! -f "constant/polyMesh/faces" ]; then
+    echo "ERROR: Mesh is incomplete (faces file missing)!"
+    echo "Run ./Allmesh to regenerate the mesh"
+    exit 1
+fi
+
+echo "✓ Mesh found in constant/polyMesh/"
+
+# Pulisci solo i risultati (NON la mesh)
+echo "Cleaning old results..."
+rm -rf [1-9]* [0-9]*.[0-9]* processor* postProcessing 2>/dev/null
+
+# Rimuovi solo la directory 0 (condizioni iniziali precedenti)
+rm -rf 0
+
+# Copia condizioni iniziali
+echo "Copying initial conditions from 0.orig to 0..."
+if [ ! -d "0.orig" ]; then
+    echo "ERROR: 0.orig directory not found!"
+    exit 1
+fi
+cp -r 0.orig 0
+
+# Verifica che i file di boundary conditions esistano
+echo "Checking boundary conditions..."
+for file in U p k omega nut; do
+    if [ ! -f "0/$file" ]; then
+        echo "ERROR: 0/$file not found!"
+        exit 1
+    fi
+done
+echo "✓ All boundary condition files present"
+
+# Inizializza
+echo "Running potentialFoam..."
+potentialFoam > log.potentialFoam 2>&1
+if [ $? -ne 0 ]; then
+    echo "⚠ potentialFoam had issues, continuing anyway..."
+fi
+
+# Esegui simulazione
+echo "Running simpleFoam..."
+echo "Monitoring log file (Ctrl+C to stop viewing, simulation continues)..."
+simpleFoam 2>&1 | tee log.simpleFoam
+
+# Controlla se è completato con successo
+if [ ${PIPESTATUS[0]} -eq 0 ]; then
+    echo ""
+    echo "================================"
+    echo "✓ Simulation COMPLETED!"
+    echo "================================"
+    echo "Results in: postProcessing/"
+    echo "View with: paraFoam"
+else
+    echo ""
+    echo "================================"
+    echo "✗ Simulation FAILED!"
+    echo "================================"
+    echo "Check log.simpleFoam for errors"
+    exit 1
+fi
