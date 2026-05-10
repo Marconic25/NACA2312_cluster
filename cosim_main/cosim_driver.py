@@ -466,11 +466,13 @@ def run_decompose(dt=1e-5):
     # decomposePar to look for a non-existent time dir → no processor*/0/ created.
     update_control_dict(0.0, dt)
     print("  Running decomposePar...")
-    result = subprocess.run(
-        ["decomposePar", "-force"],
-        cwd=CASE_DIR,
-        capture_output=True, text=True
-    )
+    CONTAINER = "/work/u10677113/of7.sif"
+    cmd = [
+        "apptainer", "exec", CONTAINER,
+        "/bin/bash", "-c",
+        f"source /opt/openfoam7/etc/bashrc && cd {str(CASE_DIR)} && decomposePar -force"
+    ]
+    result = subprocess.run(cmd, cwd=CASE_DIR, capture_output=True, text=True)
     if result.returncode != 0:
         print(result.stdout[-2000:])
         print(result.stderr[-2000:])

@@ -2,9 +2,10 @@
 
 #------------------------------------------------------------------------------
 # Allrun — NACA2312 Co-simulation
-# Stage 1 (snappyHexMesh) : skip se mesh presente in wingMotion2D_simpleFoam
-# Stage 2 (simpleFoam)    : skip se latestTime > 0 presente
-# Stage 3 (pimpleFoam)    : sempre eseguito
+# Stage 1 (snappyHexMesh) : skip se mesh presente in rans_baseline
+# Stage 2 (simpleFoam)    : skip se latestTime > 0 presente in rans_baseline
+# Stage 3 (pimpleFoam)    : sempre eseguito (cosim_main)
+# Stage 4 (post-proc)     : reconstructPar + plot (cosim_main)
 #------------------------------------------------------------------------------
 
 set -e
@@ -23,15 +24,11 @@ runApplication() {
     local CURRENT_DIR
     CURRENT_DIR="$(pwd -P)"
     echo "--- Running $APP $@ ---"
-    apptainer exec "$CONTAINER_ABS" /bin/bash -c         "source /opt/openfoam7/etc/bashrc && cd ${CURRENT_DIR} && $APP $*"         2>&1 | tee "log.$APP"
+    apptainer exec "$CONTAINER_ABS" /bin/bash -c \
+        "source /opt/openfoam7/etc/bashrc && cd ${CURRENT_DIR} && $APP $*" \
+        2>&1 | tee "log.$APP"
 }
 
-cleanTimeDirectories() {
-    echo "Cleaning time directories..."
-    find . -maxdepth 1 -name '[0-9]*' ! -name '0' ! -name '0.orig' -exec rm -rf {} +
-}
-
-# Ritorna la cartella numerica più alta (latestTime)
 latestTime() {
     local DIR="${1:-.}"
     find "$DIR" -maxdepth 1 -name '[0-9]*' ! -name '0' ! -name '0.orig' \
@@ -39,7 +36,7 @@ latestTime() {
 }
 
 #------------------------------------------------------------------------------
-# SETUP WRAPPER
+# SETUP WRAPPER (comandi OF disponibili in PATH)
 #------------------------------------------------------------------------------
 
 echo "--- Setup: Creating OpenFOAM wrappers ---"
@@ -58,95 +55,96 @@ done
 export PATH="$WRAPPER_DIR:$PATH"
 
 #------------------------------------------------------------------------------
-# Stage 1 — snappyHexMesh (SKIP se mesh già presente)
+# Stage 1 — snappyHexMesh (SKIP se mesh già presente in rans_baseline)
 #------------------------------------------------------------------------------
 
 echo ""
 echo "====== Stage 1: snappyHexMesh ======"
 
-SIMPLE_MESH="$WORKDIR/wingMotion2D_simpleFoam/constant/polyMesh/points"
-if [ -f "$SIMPLE_MESH" ]; then
-    echo ">>> SKIP: mesh già presente in wingMotion2D_simpleFoam/constant/polyMesh"
+RANS_MESH="$WORKDIR/rans_baseline/constant/polyMesh/points"
+if [ -f "$RANS_MESH" ]; then
+    echo ">>> SKIP: mesh già presente in rans_baseline/constant/polyMesh"
 else
     echo ">>> Mesh non trovata, eseguo snappyHexMesh..."
     (
-        cd "$WORKDIR/wingMotion_snappyHexMesh" || exit 1
+        cd "$WORKDIR/mesh_baseline" || exit 1
         runApplication blockMesh
         runApplication surfaceFeatureExtract
         runApplication snappyHexMesh -overwrite
         runApplication checkMesh -latestTime
+        # Copia polyMesh in rans_baseline
+        mkdir -p "$WORKDIR/rans_baseline/constant/polyMesh"
+        cp -r constant/polyMesh/* "$WORKDIR/rans_baseline/constant/polyMesh/"
+        echo ">>> Mesh copiata in rans_baseline/constant/polyMesh"
     )
 fi
 
 #------------------------------------------------------------------------------
-# Stage 2 — simpleFoam (SKIP se latestTime > 0 trovato)
+# Stage 2 — simpleFoam (SKIP se latestTime > 0 trovato in rans_baseline)
 #------------------------------------------------------------------------------
 
 echo ""
-echo "====== Stage 2: simpleFoam ======"
+echo "====== Stage 2: simpleFoam (rans_baseline) ======"
 
-LATEST=$(latestTime "$WORKDIR/wingMotion2D_simpleFoam")
+LATEST=$(latestTime "$WORKDIR/rans_baseline")
 
 if [ -n "$LATEST" ]; then
-    echo ">>> SKIP: soluzione trovata in wingMotion2D_simpleFoam/$LATEST"
+    echo ">>> SKIP: soluzione trovata in rans_baseline/$LATEST"
 else
     echo ">>> Nessuna soluzione trovata, eseguo simpleFoam..."
     (
-        cd "$WORKDIR/wingMotion2D_simpleFoam" || exit 1
-
-        # La mesh è già in constant/polyMesh, ripristina solo le IC
+        cd "$WORKDIR/rans_baseline" || exit 1
         rm -rf 0
         cp -r 0.orig 0
-
         runApplication simpleFoam
-
         LATEST=$(latestTime .)
         echo ">>> simpleFoam completato. LatestTime: $LATEST"
     )
 fi
 
-# Ri-leggi latestTime dopo eventuale esecuzione
-SIMPLE_LATEST=$(latestTime "$WORKDIR/wingMotion2D_simpleFoam")
-if [ -z "$SIMPLE_LATEST" ]; then
+RANS_LATEST=$(latestTime "$WORKDIR/rans_baseline")
+if [ -z "$RANS_LATEST" ]; then
     echo "ERRORE: simpleFoam non ha prodotto soluzioni. Controlla log.simpleFoam"
     exit 1
 fi
-echo ">>> Source per mapFields: wingMotion2D_simpleFoam/$SIMPLE_LATEST"
+echo ">>> Source per mapFields: rans_baseline/$RANS_LATEST"
 
 #------------------------------------------------------------------------------
-# Stage 3 — pimpleFoam + co-simulazione Python
+# Stage 3 — mapFields + topoSet + co-simulazione Python (cosim_main)
 #------------------------------------------------------------------------------
 
 echo ""
 echo "====== Stage 3: Co-simulation (pimpleFoam + Python) ======"
 (
-    cd "$WORKDIR/wingMotion2D_pimpleFoam" || exit 1
+    cd "$WORKDIR/cosim_main" || exit 1
 
-    # 1. Reset solo se fresh start
+    # Reset solo se fresh start
     if [ ! -f cosim_state.json ]; then
-        rm -rf processor* 0 log.* 2>/dev/null || true
+        rm -rf processor* log.* 2>/dev/null || true
+        rm -rf 0 2>/dev/null || true
     fi
 
-    # 2. Condizioni iniziali
+    # Condizioni iniziali
     cp -r 0.orig 0
 
-    # 3. Mappa soluzione stazionaria come IC
-echo "--- Running mapFields ---"
-	apptainer exec "$CONTAINER_ABS" /bin/bash -c \
-    "source /opt/openfoam7/etc/bashrc && \
-     cd '$WORKDIR/wingMotion2D_pimpleFoam' && \
-     mapFields '$WORKDIR/wingMotion2D_simpleFoam' -sourceTime latestTime -consistent" \
-    2>&1 | tee log.mapFields
-    # 4. Zone di movimento
+    # Mappa soluzione stazionaria come IC
+    echo "--- Running mapFields ---"
+    apptainer exec "$CONTAINER_ABS" /bin/bash -c \
+        "source /opt/openfoam7/etc/bashrc && \
+         cd '$WORKDIR/cosim_main' && \
+         mapFields '$WORKDIR/rans_baseline' -sourceTime latestTime -consistent" \
+        2>&1 | tee log.mapFields
+
+    # Zone di movimento
     runApplication topoSet
 
-    # 5. Rinomina pointDisplacement se necessario
+    # Rinomina pointDisplacement se necessario
     if [ -f 0/pointDisplacement.unmapped ]; then
         mv -f 0/pointDisplacement.unmapped 0/pointDisplacement
         echo ">>> Rinominato: pointDisplacement.unmapped → pointDisplacement"
     fi
 
-    # 6. Driver Python (Python 3.12 del cluster)
+    # Driver Python
     echo ">>> Avvio co-simulazione..."
     if [ -f cosim_state.json ]; then
         echo '>>> Restart detectato: riprendendo da stato salvato...'
@@ -154,6 +152,10 @@ echo "--- Running mapFields ---"
     else
         RESTART_FLAG=''
     fi
+
+    source /software/spack/share/spack/setup-env.sh
+    source "$WORKDIR/my_venv/bin/activate"
+
     python3 cosim_driver.py --np 16 --window 200 --t-end 1.0 $RESTART_FLAG \
         2>&1 | tee log.cosim_driver
 )
@@ -165,12 +167,11 @@ echo "--- Running mapFields ---"
 echo ""
 echo "====== Stage 4: Post-processing ======"
 (
-    cd "$WORKDIR/wingMotion2D_pimpleFoam" || exit 1
+    cd "$WORKDIR/cosim_main" || exit 1
     echo ">>> Running final reconstructPar..."
     apptainer exec "$CONTAINER_ABS" /bin/bash -c \
-        "source /opt/openfoam7/etc/bashrc && cd '$WORKDIR/wingMotion2D_pimpleFoam' && reconstructPar" \
+        "source /opt/openfoam7/etc/bashrc && cd '$WORKDIR/cosim_main' && reconstructPar" \
         2>&1 | tee log.reconstructPar
-    python3 plot_response.py --t-end 1.0
 )
 
 echo ""
