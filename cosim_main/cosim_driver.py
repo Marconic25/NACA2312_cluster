@@ -407,13 +407,23 @@ def read_control_dict_value(key):
     raise KeyError(f"{key} not found in controlDict")
 
 
-def update_control_dict(start_time, end_time):
-    """Update startTime and endTime in system/controlDict."""
+def update_control_dict(start_time, end_time, use_latest_time=False):
+    """Update startTime and endTime in system/controlDict.
+
+    use_latest_time=True → startFrom latestTime (for window 1+, OF picks up
+    the last written processor time dir automatically).
+    use_latest_time=False → startFrom startTime with explicit startTime value
+    (for decomposePar and window 0).
+    """
     path = SYS_DIR / "controlDict"
     with open(path) as f:
         content = f.read()
-    content = re.sub(r"startFrom[^\n;]*;",
-                     "startFrom       startTime;", content)
+    if use_latest_time:
+        content = re.sub(r"startFrom[^\n;]*;",
+                         "startFrom       latestTime;", content)
+    else:
+        content = re.sub(r"startFrom[^\n;]*;",
+                         "startFrom       startTime;", content)
     content = re.sub(r"(startTime\s+)[\d.eE+\-]+\s*;",
                      f"\\g<1>{start_time:.10e};", content)
     content = re.sub(r"stopAt[^\n;]*;",
@@ -667,8 +677,11 @@ def main():
         )
         print(f"  Flap δ: {delta_schedule(t_cur):.2f}° → {delta_schedule(t_win_end):.2f}°")
 
-        # Update controlDict for this window
-        update_control_dict(t_cur, t_win_end)
+        # Update controlDict for this window.
+        # Window 0: startFrom startTime (t=0, processor*/0/ exists from decomposePar).
+        # Window 1+: startFrom latestTime so OF picks up the last written time dir
+        #            without needing to know the exact directory name.
+        update_control_dict(t_cur, t_win_end, use_latest_time=(window_idx > 0))
 
         # Run pimpleFoam
         ok = run_pimple(args.np)
