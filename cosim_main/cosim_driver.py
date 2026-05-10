@@ -696,7 +696,9 @@ def main():
                         pass
             if time_dirs:
                 _, dst_dir = min(time_dirs)
-                shutil.copy2(src_pd, dst_dir / "pointDisplacement")
+                dst_pd = dst_dir / "pointDisplacement"
+                if src_pd.resolve() != dst_pd.resolve():
+                    shutil.copy2(src_pd, dst_pd)
 
         # Read aerodynamic forces from this window
         t_f, Fy_f, Mz_f = read_forces(t_cur, t_win_end)
