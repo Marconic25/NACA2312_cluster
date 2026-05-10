@@ -65,7 +65,7 @@ multiInterpolatingSolidBodyMotionSolverCoeffs
         innerDistance   0.3;
         outerDistance   4.0;
         distMode        bbox;
-        distCentreX     0.36;
+        distCentreX     0.40;
         distCentreY     0.0;
         distHalfX       0.36;
         distHalfY       0.075;
@@ -73,7 +73,7 @@ multiInterpolatingSolidBodyMotionSolverCoeffs
         solidBodyMotionFunction tabulated6DoFMotion;
         tabulated6DoFMotionCoeffs
         {
-            CofG             (0.25 0.0 0.125);
+            CofG             (0.40 0.0 0.125);
             timeDataFileName "constant/wingMotion.dat";
         }
     }

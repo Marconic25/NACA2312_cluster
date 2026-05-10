@@ -46,16 +46,17 @@ CONST_DIR  = CASE_DIR / "constant"
 SYS_DIR    = CASE_DIR / "system"
 PP_DIR     = CASE_DIR / "postProcessing" / "forces" / "0"
 
-# Structural parameters — wing only (match previous sixDoFRigidBodyMotion setup)
-M_WING   = 22.9          # wing mass [kg]
-I_WING   = 2.057121362   # wing MoI about z-axis [kg·m²]
-K_H      = 4000.0        # heave spring stiffness [N/m]
-D_H      = 2.0           # heave damping [N·s/m]
-K_ALPHA  = 700.0         # pitch spring stiffness [N·m/rad]
-D_ALPHA  = 0.5           # pitch damping [N·m·s/rad]
+# Structural parameters — Hodges-Pierce benchmark (μ=20, σ=0.4, r_α²=0.24, x_α=0.1, ζ=2%)
+# U_flutter ≈ 100 m/s (sub-critical at U_inf=80 m/s)
+M_WING   = 19.24         # wing mass [kg]   m = μ·π·ρ·b² = 20·π·1.225·0.25
+I_WING   = 1.155         # wing MoI about z-axis [kg·m²]  I_α = r_α²·m·b² = 0.24·19.24·0.25
+K_H      = 25460.0       # heave spring stiffness [N/m]   ω_h²·m = 36.4²·19.24
+D_H      = 88.0          # heave damping [N·s/m]   2·ζ·√(K_h·m), ζ=2%
+K_ALPHA  = 9530.0        # pitch spring stiffness [N·m/rad]   ω_α²·I_α = 90.9²·1.155
+D_ALPHA  = 6.6           # pitch damping [N·m·s/rad]   2·ζ·√(K_α·I_α), ζ=2%
 
 # Geometry (initial mesh coordinates)
-EA_X, EA_Y = 0.25, 0.0          # elastic axis (CoR) initial position
+EA_X, EA_Y = 0.40, 0.0          # elastic axis (CoR) at 40%c — Hodges-Pierce benchmark
 HINGE_X    = 0.779               # flap hinge initial x
 HINGE_Y    = 0.0                 # flap hinge initial y
 
@@ -74,9 +75,9 @@ I_FLAP_HINGE = I_FLAP_CG + M_FLAP * _D2           # MoI about hinge (same d) [kg
 
 # Gust parameters (cosine gust, EASA CS-25 profile)
 U_INF        = 80.0   # freestream velocity [m/s]
-GUST_W0      = 60.0   # peak gust velocity [m/s]
+GUST_W0      = 0.0    # peak gust velocity [m/s]  — temporaneamente a zero (no gust)
 GUST_T_START = 0.0    # gust onset [s]
-GUST_T_END   = 0.8    # gust end [s]  (~2 flutter periods, T_flutter≈0.4s)
+GUST_T_END   = 0.8    # gust end [s]
 
 # Flap schedule: δ(t) in degrees — prescribed kinematic input.
 # Gust excites wing (0→0.8s, flap at 0°), then flap deploys as control action:
@@ -719,6 +720,12 @@ def main():
 
     print(f"\n{'='*60}")
     print(f"Co-simulation complete: {window_idx} windows, t_final={t_cur:.5f}s")
+
+    print("\n>>> Generating response plots...")
+    subprocess.run(
+        [sys.executable, str(CASE_DIR / "plot_response.py"), "--t-end", str(t_end)],
+        cwd=CASE_DIR,
+    )
 
 
 if __name__ == "__main__":

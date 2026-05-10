@@ -28,6 +28,7 @@ from cosim_driver import (
     integrate_structural, read_forces,
     GUST_T_START, GUST_T_END, GUST_W0, U_INF,
     DELTA_TIMES, DELTA_ANGLES,
+    delta_schedule,
 )
 
 CASE_DIR   = Path(__file__).parent
@@ -58,7 +59,7 @@ def reconstruct_structural(t_end):
 
     h, hd, a, ad = 0.0, 0.0, 0.0, 0.0
     t_cur = 0.0
-    t_hist, h_hist, a_hist = [], [], []
+    t_hist, h_hist, hd_hist, a_hist, ad_hist = [], [], [], [], []
 
     n_windows = 0
     while t_cur < t_f[-1] - 1e-12:
@@ -82,13 +83,22 @@ def reconstruct_structural(t_end):
         t_cur = t_win_end
         n_windows += 1
 
+    # Compute velocities via finite differences on the reconstructed histories
+    t_arr = np.array(t_hist)
+    h_arr_full = np.array(h_hist)
+    a_arr_full = np.array(a_hist)
+    hd_arr = np.gradient(h_arr_full, t_arr)
+    ad_arr = np.gradient(a_arr_full, t_arr)
+
     print(f"  Replayed {n_windows} windows, final: h={h*1000:.2f} mm  α={np.degrees(a):.2f}°")
 
     return (
         t_f, Fy_f, Mz_f,
-        np.array(t_hist),
-        np.array(h_hist) * 1000.0,        # → mm
-        np.degrees(np.array(a_hist)),      # → deg
+        t_arr,
+        h_arr_full * 1000.0,        # → mm
+        np.degrees(a_arr_full),     # → deg
+        hd_arr * 1000.0,            # → mm/s
+        np.degrees(ad_arr),         # → deg/s
     )
 
 
@@ -110,16 +120,25 @@ AREF = 0.25    # reference area [m²] (from controlDict Aref = chord * span)
 Q_INF = 0.5 * RHO * U_INF**2   # dynamic pressure [Pa]
 
 
-def plot(t_f, Fy_f, Mz_f, t_s, h_s, a_s, t_end):
+def plot(t_f, Fy_f, Mz_f, t_s, h_s, a_s, hd_s, ad_s, t_end):
     # Skip first two windows: large initialisation transient from mapFields
     T_SKIP = 2 * WINDOW_DT
     mask = t_f >= T_SKIP
     t_fm, Fy_fm, Mz_fm = t_f[mask], Fy_f[mask], Mz_f[mask]
     Cl = Fy_fm / (Q_INF * AREF)
+    Cm = Mz_fm / (Q_INF * AREF * 1.0)   # chord = 1.0 m
 
-    fig, axes = plt.subplots(5, 1, figsize=(13, 14), sharex=True)
+    # Gust and flap schedules on structural time grid
+    gust_s  = np.array([
+        (GUST_W0 / 2.0) * (1.0 - np.cos(2.0 * np.pi * (t - GUST_T_START) / (GUST_T_END - GUST_T_START)))
+        if GUST_T_START <= t <= GUST_T_END else 0.0
+        for t in t_s
+    ])
+    delta_s = np.array([delta_schedule(t) for t in t_s])
+
+    fig, axes = plt.subplots(9, 1, figsize=(13, 22), sharex=True)
     fig.suptitle(
-        f"Wing gust response  –  Wg0={GUST_W0:.0f} m/s, U∞={U_INF:.0f} m/s",
+        f"Wing aeroelastic response  –  Wg0={GUST_W0:.0f} m/s, U∞={U_INF:.0f} m/s",
         fontsize=13, fontweight="bold"
     )
 
@@ -128,38 +147,68 @@ def plot(t_f, Fy_f, Mz_f, t_s, h_s, a_s, t_end):
     ax.plot(t_s, h_s, "C0", lw=0.9)
     ax.axhline(0, color="k", lw=0.5, ls=":")
     annotate_events(ax)
-    ax.set_ylabel("Heave  h  [mm]")
+    ax.set_ylabel("h  [mm]")
     ax.legend(fontsize=7, loc="upper left", ncol=3)
     ax.grid(True, lw=0.4, alpha=0.5)
 
-    # ── Panel 2: pitch ───────────────────────────────────────────────────────
+    # ── Panel 2: heave rate ──────────────────────────────────────────────────
     ax = axes[1]
+    ax.plot(t_s, hd_s, "C0", lw=0.9, ls="--")
+    ax.axhline(0, color="k", lw=0.5, ls=":")
+    annotate_events(ax)
+    ax.set_ylabel("ḣ  [mm/s]")
+    ax.grid(True, lw=0.4, alpha=0.5)
+
+    # ── Panel 3: pitch ───────────────────────────────────────────────────────
+    ax = axes[2]
     ax.plot(t_s, a_s, "C1", lw=0.9)
     ax.axhline(0, color="k", lw=0.5, ls=":")
     annotate_events(ax)
-    ax.set_ylabel("Pitch  α  [deg]")
+    ax.set_ylabel("α  [deg]")
     ax.grid(True, lw=0.4, alpha=0.5)
 
-    # ── Panel 3: lift coefficient ─────────────────────────────────────────────
-    ax = axes[2]
+    # ── Panel 4: pitch rate ──────────────────────────────────────────────────
+    ax = axes[3]
+    ax.plot(t_s, ad_s, "C1", lw=0.9, ls="--")
+    ax.axhline(0, color="k", lw=0.5, ls=":")
+    annotate_events(ax)
+    ax.set_ylabel("α̇  [deg/s]")
+    ax.grid(True, lw=0.4, alpha=0.5)
+
+    # ── Panel 5: lift coefficient ─────────────────────────────────────────────
+    ax = axes[4]
     ax.plot(t_fm, Cl, "C4", lw=0.7)
     ax.axhline(0, color="k", lw=0.5, ls=":")
     annotate_events(ax)
-    ax.set_ylabel("Lift coeff.  Cl  [-]")
+    ax.set_ylabel("Cl  [-]")
     ax.grid(True, lw=0.4, alpha=0.5)
 
-    # ── Panel 4: lift ────────────────────────────────────────────────────────
-    ax = axes[3]
+    # ── Panel 6: lift ────────────────────────────────────────────────────────
+    ax = axes[5]
     ax.plot(t_fm, Fy_fm, "C2", lw=0.7)
     annotate_events(ax)
-    ax.set_ylabel("Lift  Fy  [N]")
+    ax.set_ylabel("Fy  [N]")
     ax.grid(True, lw=0.4, alpha=0.5)
 
-    # ── Panel 5: moment ──────────────────────────────────────────────────────
-    ax = axes[4]
-    ax.plot(t_fm, Mz_fm, "C3", lw=0.7)
+    # ── Panel 7: moment coefficient ──────────────────────────────────────────
+    ax = axes[6]
+    ax.plot(t_fm, Cm, "C3", lw=0.7)
+    ax.axhline(0, color="k", lw=0.5, ls=":")
     annotate_events(ax)
-    ax.set_ylabel("Moment  Mz  [N·m]")
+    ax.set_ylabel("Cm  [-]")
+    ax.grid(True, lw=0.4, alpha=0.5)
+
+    # ── Panel 8: gust profile ────────────────────────────────────────────────
+    ax = axes[7]
+    ax.plot(t_s, gust_s, "C5", lw=0.9)
+    ax.axhline(0, color="k", lw=0.5, ls=":")
+    ax.set_ylabel("W_gust  [m/s]")
+    ax.grid(True, lw=0.4, alpha=0.5)
+
+    # ── Panel 9: flap angle ──────────────────────────────────────────────────
+    ax = axes[8]
+    ax.plot(t_s, delta_s, "C6", lw=0.9)
+    ax.set_ylabel("δ  [deg]")
     ax.set_xlabel("Time  [s]")
     ax.set_xlim(0, t_end)
     ax.grid(True, lw=0.4, alpha=0.5)
@@ -177,8 +226,8 @@ def main():
                         help="Time horizon for plot [s] (default: 2.0)")
     args = parser.parse_args()
 
-    t_f, Fy_f, Mz_f, t_s, h_s, a_s = reconstruct_structural(args.t_end)
-    plot(t_f, Fy_f, Mz_f, t_s, h_s, a_s, args.t_end)
+    t_f, Fy_f, Mz_f, t_s, h_s, a_s, hd_s, ad_s = reconstruct_structural(args.t_end)
+    plot(t_f, Fy_f, Mz_f, t_s, h_s, a_s, hd_s, ad_s, args.t_end)
 
 
 if __name__ == "__main__":
