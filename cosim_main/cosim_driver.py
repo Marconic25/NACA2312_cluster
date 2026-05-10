@@ -407,13 +407,13 @@ def read_control_dict_value(key):
     raise KeyError(f"{key} not found in controlDict")
 
 
-def update_control_dict(start_time, end_time, use_latest_time=False):
-    """Update startTime and endTime in system/controlDict.
+def update_control_dict(start_time, end_time, use_latest_time=False, write_interval=None):
+    """Update startTime, endTime, and writeInterval in system/controlDict.
 
-    use_latest_time=True → startFrom latestTime (for window 1+, OF picks up
-    the last written processor time dir automatically).
-    use_latest_time=False → startFrom startTime with explicit startTime value
-    (for decomposePar and window 0).
+    use_latest_time=True → startFrom latestTime (window 1+).
+    use_latest_time=False → startFrom startTime (decomposePar and window 0).
+    write_interval: if set, overrides writeInterval so OF writes exactly once
+                    per window (= number of steps in this window).
     """
     path = SYS_DIR / "controlDict"
     with open(path) as f:
@@ -430,6 +430,9 @@ def update_control_dict(start_time, end_time, use_latest_time=False):
                      "stopAt          endTime;", content)
     content = re.sub(r"(endTime\s+)[\d.eE+\-]+\s*;",
                      f"\\g<1>{end_time:.10e};", content)
+    if write_interval is not None:
+        content = re.sub(r"(writeInterval\s+)\d+\s*;",
+                         f"\\g<1>{write_interval};", content)
     with open(path, "w") as f:
         f.write(content)
 
@@ -659,29 +662,49 @@ def main():
             t_win, h_arr, alpha_arr
         )
 
-        # Write motion .dat files (cover full remaining time so OF never runs out)
-        t_table = np.concatenate([t_win, [t_end + window_dt]])
+        # Write motion .dat files (cover full remaining time so OF never runs out).
+        # Always prepend t=0 with the window-start value so the table covers
+        # t=0 even when OF restarts from latestTime and the first sub-step is
+        # slightly before t_cur due to floating-point rounding.
+        if t_cur > 0.0:
+            t_table = np.concatenate([[0.0], t_win, [t_end + window_dt]])
+            wing_ty_t = np.concatenate([[wing_ty[0]], wing_ty, [wing_ty[-1]]])
+            wing_rz_t = np.concatenate([[wing_rz[0]], wing_rz, [wing_rz[-1]]])
+            flap_tx_t = np.concatenate([[flap_tx[0]], flap_tx, [flap_tx[-1]]])
+            flap_ty_t = np.concatenate([[flap_ty[0]], flap_ty, [flap_ty[-1]]])
+            flap_rz_t = np.concatenate([[flap_rz[0]], flap_rz, [flap_rz[-1]]])
+        else:
+            t_table   = np.concatenate([t_win, [t_end + window_dt]])
+            wing_ty_t = np.append(wing_ty, wing_ty[-1])
+            wing_rz_t = np.append(wing_rz, wing_rz[-1])
+            flap_tx_t = np.append(flap_tx, flap_tx[-1])
+            flap_ty_t = np.append(flap_ty, flap_ty[-1])
+            flap_rz_t = np.append(flap_rz, flap_rz[-1])
         write_tabulated6dof(
             CONST_DIR / "wingMotion.dat",
             t_table,
-            np.append(np.zeros(len(t_win)), 0),
-            np.append(wing_ty, wing_ty[-1]),
-            np.append(wing_rz, wing_rz[-1]),
+            np.zeros(len(t_table)),
+            wing_ty_t,
+            wing_rz_t,
         )
         write_tabulated6dof(
             CONST_DIR / "flapMotion.dat",
             t_table,
-            np.append(flap_tx, flap_tx[-1]),
-            np.append(flap_ty, flap_ty[-1]),
-            np.append(flap_rz, flap_rz[-1]),
+            flap_tx_t,
+            flap_ty_t,
+            flap_rz_t,
         )
         print(f"  Flap δ: {delta_schedule(t_cur):.2f}° → {delta_schedule(t_win_end):.2f}°")
 
         # Update controlDict for this window.
         # Window 0: startFrom startTime (t=0, processor*/0/ exists from decomposePar).
-        # Window 1+: startFrom latestTime so OF picks up the last written time dir
-        #            without needing to know the exact directory name.
-        update_control_dict(t_cur, t_win_end, use_latest_time=(window_idx > 0))
+        # Window 1+: startFrom latestTime so OF picks up the last written time dir.
+        # writeInterval = window size so OF writes exactly one snapshot per window,
+        # guaranteeing processor*/t_win_end/ exists for the next window to restart from.
+        n_steps = len(t_win) - 1
+        update_control_dict(t_cur, t_win_end,
+                            use_latest_time=(window_idx > 0),
+                            write_interval=n_steps)
 
         # Run pimpleFoam
         ok = run_pimple(args.np)
