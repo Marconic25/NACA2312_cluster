@@ -57,7 +57,7 @@ functions
         rho                 rhoInf;
         log                 true;
         rhoInf              1.225;
-        CofR                (0.25 0.007 0.125);
+        CofR                (0.40 0.0 0.125);
     }
 
     forceCoeffs
@@ -73,7 +73,7 @@ functions
         magUInf             80;
         lRef                1;
         Aref                0.05;
-        CofR                (0.25 0.007 0.125);
+        CofR                (0.40 0.0 0.125);
         liftDir             (0 1 0);
         dragDir             (1 0 0);
         pitchAxis           (0 0 1);
