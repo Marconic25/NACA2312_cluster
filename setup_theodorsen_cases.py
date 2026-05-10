@@ -30,7 +30,7 @@ import matplotlib.pyplot as plt
 
 # ── Configuration ──────────────────────────────────────────────────────────────
 WORKDIR     = Path("/work/u10677113/NACA2312")
-TEMPLATE    = WORKDIR / "wingMotion2D_pimpleFoam"
+TEMPLATE    = WORKDIR / "cosim_main"
 CONTAINER   = "/work/u10677113/of7.sif"
 VENV_PYTHON = str(WORKDIR / "my_venv/bin/python3")
 N_PROCS     = 16

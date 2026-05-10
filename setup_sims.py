@@ -3,7 +3,7 @@
 setup_sims.py — Create simulation directories for GLA dataset.
 
 For each row in metadata.csv:
-  1. Copy the base case (wingMotion2D_pimpleFoam) to dataset/<sim_name>/
+  1. Copy the base case (cosim_main) to dataset/<sim_name>/
   2. Patch cosim_driver.py with the correct gust and flap parameters
   3. Generate the PBS job script
 
@@ -312,9 +312,9 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__,
                                      formatter_class=argparse.RawDescriptionHelpFormatter)
     parser.add_argument("--base-case", type=str, required=True,
-                        help="Path to base wingMotion2D_pimpleFoam case")
+                        help="Path to base cosim_main case")
     parser.add_argument("--base-simple", type=str, default=None,
-                        help="Path to wingMotion2D_simpleFoam (for mapFields IC)")
+                        help="Path to rans_baseline (for mapFields IC)")
     parser.add_argument("--metadata", type=str, default="metadata.csv")
     parser.add_argument("--output-dir", type=str, default="dataset")
     parser.add_argument("--submit", action="store_true",
@@ -325,7 +325,7 @@ def main():
     if args.base_simple:
         base_simple = Path(args.base_simple).resolve()
     else:
-        base_simple = base_case.parent / "wingMotion2D_simpleFoam"
+        base_simple = base_case.parent / "rans_baseline"
     output_dir = Path(args.output_dir).resolve()
     metadata_path = Path(args.metadata)
 

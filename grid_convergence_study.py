@@ -32,8 +32,8 @@ from pathlib import Path
 
 WORKDIR        = Path("/work/u10677113/NACA2312")
 CONTAINER      = "/work/u10677113/of7.sif"
-SNAPPY_CASE    = WORKDIR / "wingMotion_snappyHexMesh"
-SIMPLE_CASE    = WORKDIR / "wingMotion2D_simpleFoam"
+SNAPPY_CASE    = WORKDIR / "mesh_baseline"
+SIMPLE_CASE    = WORKDIR / "rans_baseline"
 STUDY_DIR      = WORKDIR / "grid_convergence"
 
 # Reference chord and span for force coefficients (must match simpleFoam forceCoeffs)

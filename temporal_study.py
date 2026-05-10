@@ -18,7 +18,7 @@ from pathlib import Path
 # ── Configuration ──────────────────────────────────────────────────────────
 WORKDIR       = Path("/work/u10677113/NACA2312")
 CONTAINER     = "/work/u10677113/of7.sif"
-PIMPLE_CASE   = WORKDIR / "wingMotion2D_pimpleFoam"
+PIMPLE_CASE   = WORKDIR / "cosim_main"
 STUDY_DIR     = WORKDIR / "temporal_study"
 END_TIME      = 1.0        # s — enough for 5 oscillation cycles
 WINDOW_SIZE   = 0.02       # pimple window size (keep same as production)

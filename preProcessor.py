@@ -4,7 +4,7 @@ import shutil
 
 FLAP_ANGLE_DEG = +5 #positive rotates up
 HINGE = (0.775, -0.045)
-SNAP_DIR   = os.path.join(os.path.dirname(os.path.abspath(__file__)), "wingMotion_snappyHexMesh")
+SNAP_DIR   = os.path.join(os.path.dirname(os.path.abspath(__file__)), "mesh_baseline")
 SOURCE_DIR = os.path.join(SNAP_DIR, "constant", "triSurface_0deg")
 TARGET_DIR = os.path.join(SNAP_DIR, "constant", "triSurface")
 
