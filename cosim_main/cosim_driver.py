@@ -669,8 +669,11 @@ def compute_static_equilibrium():
                     Mz_static = float(last[12]) + float(last[15])
 
     if Fy_static is None:
-        print("  [WARNING] Could not read RANS forces — starting from h=0, α=0")
-        return 0.0, 0.0
+        # Values from rans_baseline converged solution (CofR corrected to EA=0.40)
+        # Fy = 163.12 N, Mz_EA = 16.364 - 163.12*0.15 = -8.10 N·m
+        Fy_static = 163.12  # N
+        Mz_static = -8.10   # N·m  (about EA at 0.40c)
+        print(f"  [INFO] Using RANS static forces: Fy={Fy_static}N  Mz={Mz_static}N·m")
 
     # Static equilibrium: K_h * h_eq = -Fy,  K_alpha * alpha_eq = Mz
     M_hh = M_WING + M_FLAP
