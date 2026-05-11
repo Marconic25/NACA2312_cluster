@@ -477,13 +477,13 @@ def reset_case(orig_dir="0.orig"):
 
 RANS_DIR = CASE_DIR.parent / "rans_baseline"
 CONTAINER = "/work/u10677113/of7.sif"
+APPTAINER_CMD = ["apptainer", "exec", "--bind", "/work", CONTAINER]
 
 
 def run_map_fields():
     """Map RANS steady-state solution onto cosim_main as initial condition."""
     print("  Running mapFields from rans_baseline...")
-    cmd = [
-        "apptainer", "exec", CONTAINER,
+    cmd = APPTAINER_CMD + [
         "/bin/bash", "-c",
         f"source /opt/openfoam7/etc/bashrc && cd {str(CASE_DIR)} && "
         f"mapFields ../rans_baseline -sourceTime latestTime -consistent"
@@ -505,8 +505,7 @@ def run_map_fields():
 def run_toposet():
     """Run topoSet to rebuild wingZone/flapZone cell sets."""
     print("  Running topoSet...")
-    cmd = [
-        "apptainer", "exec", CONTAINER,
+    cmd = APPTAINER_CMD + [
         "/bin/bash", "-c",
         f"source /opt/openfoam7/etc/bashrc && cd {str(CASE_DIR)} && topoSet"
     ]
@@ -525,9 +524,7 @@ def run_decompose(dt=1e-5):
     # decomposePar to look for a non-existent time dir → no processor*/0/ created.
     update_control_dict(0.0, dt)
     print("  Running decomposePar...")
-    CONTAINER = "/work/u10677113/of7.sif"
-    cmd = [
-        "apptainer", "exec", CONTAINER,
+    cmd = APPTAINER_CMD + [
         "/bin/bash", "-c",
         f"source /opt/openfoam7/etc/bashrc && cd {str(CASE_DIR)} && decomposePar -force"
     ]
@@ -564,8 +561,7 @@ def run_decompose(dt=1e-5):
 def run_pimple(n_procs):
     """Run pimpleFoam in parallel, streaming output."""
     print(f"  Running pimpleFoam -parallel (np={n_procs})...")
-    cmd = [
-        "apptainer", "exec", CONTAINER,
+    cmd = APPTAINER_CMD + [
         "/bin/bash", "-c",
         f"source /opt/openfoam7/etc/bashrc && cd {str(CASE_DIR)} && mpirun --oversubscribe --mca btl_base_warn_component_unused 0 --mca orte_base_help_aggregate 0 -np {n_procs} pimpleFoam -parallel"
     ]
