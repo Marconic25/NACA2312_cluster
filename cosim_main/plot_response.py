@@ -92,9 +92,23 @@ def reconstruct_structural(t_end):
     t_f, Fy_f, Mz_f = t_f[idx], Fy_f[idx], Mz_f[idx]
     print(f"  Loaded {len(t_f)} force samples, t=[{t_f[0]:.5f}, {t_f[-1]:.5f}] s")
 
+    # Read initial structural state from cosim_state.json (set by driver at t=0)
+    import json
+    state_file = CASE_DIR / "cosim_state.json"
+    h0, hd0, a0, ad0 = 0.0, 0.0, 0.0, 0.0
+    if state_file.exists():
+        with open(state_file) as f:
+            s = json.load(f)
+        # window_idx=0 entry has the initial equilibrium state
+        h0  = s.get("h",  0.0)
+        hd0 = s.get("hd", 0.0)
+        a0  = s.get("a",  0.0)
+        ad0 = s.get("ad", 0.0)
+        print(f"  Initial state from cosim_state.json: h={h0*1000:.3f}mm  α={np.degrees(a0):.4f}°")
+
     # Integrate over the full time range in one shot (no windowing artifacts)
     h_f, hd_f, a_f, ad_f, h_arr_full, a_arr_full = integrate_structural(
-        0.0, 0.0, 0.0, 0.0, t_f, Fy_f, Mz_f
+        h0, hd0, a0, ad0, t_f, Fy_f, Mz_f
     )
     t_arr = t_f
     hd_arr = np.gradient(h_arr_full, t_arr)
