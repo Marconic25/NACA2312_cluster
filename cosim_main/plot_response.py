@@ -40,6 +40,7 @@ def read_all_forces(t_end):
     t_list, Fy_list, Mz_list = [], [], []
     for forces_file in sorted(forces_base.glob("*/forces.dat"),
                               key=lambda p: float(p.parent.name)):
+        samples_in_window = 0
         with open(forces_file) as f:
             for line in f:
                 line = line.strip()
@@ -47,6 +48,9 @@ def read_all_forces(t_end):
                     continue
                 nums = _re.findall(r"[-+]?\d*\.?\d+(?:[eE][-+]?\d+)?", line)
                 if len(nums) < 19:
+                    continue
+                samples_in_window += 1
+                if samples_in_window <= 2:   # skip first 2 samples (restart transient)
                     continue
                 t = float(nums[0])
                 if t > t_end + 1e-12:

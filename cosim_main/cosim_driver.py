@@ -612,6 +612,79 @@ def load_state():
             s["window_idx"], s["t_end"], s["dt"])
 
 
+def compute_static_equilibrium():
+    """
+    Estimate static equilibrium (h_eq, alpha_eq) from RANS forces.
+
+    Reads the forces.dat from rans_baseline postProcessing (if available),
+    otherwise runs a short probe window and reads the mean force.
+    Falls back to reading from the first cosim window postProcessing.
+
+    Returns (h_eq [m], alpha_eq [rad]).
+    """
+    # Try to read forces from rans_baseline postProcessing
+    rans_pp = RANS_DIR / "postProcessing" / "forces"
+    Fy_static, Mz_static = None, None
+
+    if rans_pp.exists():
+        force_files = sorted(rans_pp.glob("*/forces.dat"))
+        if force_files:
+            # Read last file, take last entry
+            with open(force_files[-1]) as f:
+                last = None
+                for line in f:
+                    line = line.strip()
+                    if not line or line.startswith("#"):
+                        continue
+                    nums = re.findall(r"[-+]?\d*\.?\d+(?:[eE][-+]?\d+)?", line)
+                    if len(nums) >= 19:
+                        last = nums
+                if last:
+                    Fy_static = float(last[2]) + float(last[5])
+                    Mz_static = float(last[12]) + float(last[15])
+
+    if Fy_static is None:
+        # Fallback: run postProcess on rans_baseline to extract forces
+        print("  Running postProcess on rans_baseline to get static forces...")
+        cmd = APPTAINER_CMD + [
+            "/bin/bash", "-c",
+            f"source /opt/openfoam7/etc/bashrc && cd {str(RANS_DIR)} && "
+            f"postProcess -func forces -latestTime"
+        ]
+        subprocess.run(cmd, cwd=RANS_DIR, capture_output=True)
+        # Retry reading
+        force_files = sorted(rans_pp.glob("*/forces.dat")) if rans_pp.exists() else []
+        if force_files:
+            with open(force_files[-1]) as f:
+                last = None
+                for line in f:
+                    line = line.strip()
+                    if not line or line.startswith("#"):
+                        continue
+                    nums = re.findall(r"[-+]?\d*\.?\d+(?:[eE][-+]?\d+)?", line)
+                    if len(nums) >= 19:
+                        last = nums
+                if last:
+                    Fy_static = float(last[2]) + float(last[5])
+                    Mz_static = float(last[12]) + float(last[15])
+
+    if Fy_static is None:
+        print("  [WARNING] Could not read RANS forces — starting from h=0, α=0")
+        return 0.0, 0.0
+
+    # Static equilibrium: K_h * h_eq = -Fy,  K_alpha * alpha_eq = Mz
+    M_hh = M_WING + M_FLAP
+    M_aa = I_WING + I_FLAP_EA
+    M_ha = M_FLAP * _D_X
+    det  = M_hh * M_aa - M_ha**2
+    # With zero velocity (static): solve directly from stiffness
+    h_eq     = -Fy_static / K_H
+    alpha_eq =  Mz_static / K_ALPHA
+    print(f"  Static equilibrium: Fy={Fy_static:.1f}N  Mz={Mz_static:.3f}N·m")
+    print(f"    h_eq={h_eq*1000:.3f}mm  α_eq={np.degrees(alpha_eq):.4f}°")
+    return h_eq, alpha_eq
+
+
 # ──────────────────────────── main loop ─────────────────────────────────────
 
 def main():
@@ -645,15 +718,20 @@ def main():
         reset_case()         # copies 0.orig → 0, removes processor* and postProcessing
         run_map_fields()     # map RANS steady solution as IC
         run_toposet()        # rebuild wingZone/flapZone cell sets
-        # Seed zero-motion tables for the full simulation duration
+        # Initialise structural state at static equilibrium to suppress transient
+        h, a = compute_static_equilibrium()
+        hd, ad = 0.0, 0.0
+        # Seed motion tables at equilibrium position for the full simulation duration
         window_dt = args.window * dt
         t_seed = np.array([0.0, t_end + window_dt])
+        h_seed = np.array([h, h])
+        a_seed_deg = np.degrees(np.array([a, a]))
         write_tabulated6dof(CONST_DIR / "wingMotion.dat",
-                            t_seed, np.zeros(2), np.zeros(2), np.zeros(2))
+                            t_seed, np.zeros(2), h_seed, a_seed_deg)
         write_tabulated6dof(CONST_DIR / "flapMotion.dat",
-                            t_seed, np.zeros(2), np.zeros(2), np.zeros(2))
+                            t_seed, np.zeros(2), h_seed, a_seed_deg)
         # Save initial state (includes t_end and dt for restart)
-        save_state(0.0, 0.0, 0.0, 0.0, 0.0, 0, t_end, dt)
+        save_state(0.0, h, hd, a, ad, 0, t_end, dt)
         run_decompose(dt)
     else:
         # Restore full state from JSON (includes t_end and dt)
