@@ -475,6 +475,49 @@ def reset_case(orig_dir="0.orig"):
         shutil.copytree(orig, zero)
 
 
+RANS_DIR = CASE_DIR.parent / "rans_baseline"
+CONTAINER = "/work/u10677113/of7.sif"
+
+
+def run_map_fields():
+    """Map RANS steady-state solution onto cosim_main as initial condition."""
+    print("  Running mapFields from rans_baseline...")
+    cmd = [
+        "apptainer", "exec", CONTAINER,
+        "/bin/bash", "-c",
+        f"source /opt/openfoam7/etc/bashrc && cd {str(CASE_DIR)} && "
+        f"mapFields {str(RANS_DIR)} -sourceTime latestTime -consistent"
+    ]
+    result = subprocess.run(cmd, cwd=CASE_DIR, capture_output=True, text=True)
+    if result.returncode != 0:
+        print(result.stdout[-2000:])
+        print(result.stderr[-2000:])
+        raise RuntimeError("mapFields failed")
+    # pointDisplacement gets renamed to .unmapped by mapFields — restore it
+    pd_unmapped = CASE_DIR / "0" / "pointDisplacement.unmapped"
+    pd = CASE_DIR / "0" / "pointDisplacement"
+    if pd_unmapped.exists():
+        pd_unmapped.rename(pd)
+        print("  Renamed pointDisplacement.unmapped → pointDisplacement")
+    print("  mapFields complete")
+
+
+def run_toposet():
+    """Run topoSet to rebuild wingZone/flapZone cell sets."""
+    print("  Running topoSet...")
+    cmd = [
+        "apptainer", "exec", CONTAINER,
+        "/bin/bash", "-c",
+        f"source /opt/openfoam7/etc/bashrc && cd {str(CASE_DIR)} && topoSet"
+    ]
+    result = subprocess.run(cmd, cwd=CASE_DIR, capture_output=True, text=True)
+    if result.returncode != 0:
+        print(result.stdout[-2000:])
+        print(result.stderr[-2000:])
+        raise RuntimeError("topoSet failed")
+    print("  topoSet complete")
+
+
 def run_decompose(dt=1e-5):
     """Run decomposePar to split for parallel."""
     # Always reset controlDict to startTime=0 before decomposePar.
@@ -521,7 +564,6 @@ def run_decompose(dt=1e-5):
 def run_pimple(n_procs):
     """Run pimpleFoam in parallel, streaming output."""
     print(f"  Running pimpleFoam -parallel (np={n_procs})...")
-    CONTAINER = "/work/u10677113/of7.sif"
     cmd = [
         "apptainer", "exec", CONTAINER,
         "/bin/bash", "-c",
@@ -602,7 +644,9 @@ def main():
                  else (saved[6] if saved is not None else read_control_dict_value("endTime")))
         print("\n--- Fresh start ---")
         write_gust_inlet()   # regenerate fixedInlet with current gust parameters
-        reset_case()         # copies 0.orig → 0 (picks up new fixedInlet)
+        reset_case()         # copies 0.orig → 0, removes processor* and postProcessing
+        run_map_fields()     # map RANS steady solution as IC
+        run_toposet()        # rebuild wingZone/flapZone cell sets
         # Seed zero-motion tables for the full simulation duration
         window_dt = args.window * dt
         t_seed = np.array([0.0, t_end + window_dt])
