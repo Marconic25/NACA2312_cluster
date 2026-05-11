@@ -897,10 +897,11 @@ def main():
         )
         print(f"  Structural response end: h={h*1000:.3f}mm  α={np.degrees(a):.3f}°")
 
-        # Write trajectory to CSV
+        # Write trajectory to CSV — skip first 2 points (restart transient)
+        skip = 10 if window_idx == 0 else 2
         Fy_traj = np.interp(t_win, t_f, Fy_f) if t_f is not None else Fy_win
         Mz_traj = np.interp(t_win, t_f, Mz_f) if t_f is not None else Mz_win
-        for i in range(len(t_win)):
+        for i in range(skip, len(t_win)):
             traj_file.write(
                 f"{t_win[i]:.8e},{h_traj[i]:.8e},{hd_traj[i]:.8e},"
                 f"{a_traj[i]:.8e},{ad_traj[i]:.8e},"
