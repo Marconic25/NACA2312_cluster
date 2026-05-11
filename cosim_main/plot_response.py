@@ -25,11 +25,44 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).parent))
 from cosim_driver import (
-    integrate_structural, read_forces,
+    integrate_structural,
     GUST_T_START, GUST_T_END, GUST_W0, U_INF,
     DELTA_TIMES, DELTA_ANGLES,
     delta_schedule,
+    CASE_DIR as _CASE_DIR,
 )
+import re as _re
+
+
+def read_all_forces(t_end):
+    """Read all forces.dat files ignoring window boundaries."""
+    forces_base = _CASE_DIR / "postProcessing" / "forces"
+    t_list, Fy_list, Mz_list = [], [], []
+    for forces_file in sorted(forces_base.glob("*/forces.dat"),
+                              key=lambda p: float(p.parent.name)):
+        with open(forces_file) as f:
+            for line in f:
+                line = line.strip()
+                if not line or line.startswith("#"):
+                    continue
+                nums = _re.findall(r"[-+]?\d*\.?\d+(?:[eE][-+]?\d+)?", line)
+                if len(nums) < 19:
+                    continue
+                t = float(nums[0])
+                if t > t_end + 1e-12:
+                    continue
+                t_list.append(t)
+                Fy_list.append(float(nums[2]) + float(nums[5]))
+                Mz_list.append(float(nums[12]) + float(nums[15]))
+    if not t_list:
+        raise RuntimeError("No force data found in postProcessing/forces/")
+    t = np.array(t_list)
+    Fy = np.array(Fy_list)
+    Mz = np.array(Mz_list)
+    idx = np.argsort(t)
+    t, Fy, Mz = t[idx], Fy[idx], Mz[idx]
+    _, ui = np.unique(t, return_index=True)
+    return t[ui], Fy[ui], Mz[ui]
 
 CASE_DIR   = Path(__file__).parent
 FIG_DIR    = CASE_DIR / "figures"
@@ -48,9 +81,7 @@ T_FLAP_END   = DELTA_TIMES[-1]
 def reconstruct_structural(t_end):
     """Read forces and replay structural integration to get h(t) and α(t)."""
     print(f"Reading forces up to t={t_end:.3f} s ...")
-    t_f, Fy_f, Mz_f = read_forces(0.0, t_end)
-    if t_f is None:
-        raise RuntimeError("No force data found in postProcessing/forces/")
+    t_f, Fy_f, Mz_f = read_all_forces(t_end)
 
     # Remove duplicate timestamps (can occur at window boundaries)
     _, idx = np.unique(t_f, return_index=True)
