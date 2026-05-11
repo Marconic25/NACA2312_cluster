@@ -108,12 +108,10 @@ def reconstruct_structural(t_end):
         print(f"  Initial state from cosim_state.json: h={h0*1000:.3f}mm  α={np.degrees(a0):.4f}°")
 
     # Integrate over the full time range in one shot (no windowing artifacts)
-    h_f, hd_f, a_f, ad_f, h_arr_full, a_arr_full = integrate_structural(
+    h_f, hd_f, a_f, ad_f, h_arr_full, hd_arr, a_arr_full, ad_arr = integrate_structural(
         h0, hd0, a0, ad0, t_f, Fy_f, Mz_f
     )
     t_arr = t_f
-    hd_arr = np.gradient(h_arr_full, t_arr)
-    ad_arr = np.gradient(a_arr_full, t_arr)
 
     print(f"  Integrated full trajectory: h_final={h_f*1000:.2f} mm  α_final={np.degrees(a_f):.2f}°")
 
@@ -145,7 +143,7 @@ AREF = 0.25    # reference area [m²] (from controlDict Aref = chord * span)
 Q_INF = 0.5 * RHO * U_INF**2   # dynamic pressure [Pa]
 
 
-def plot(t_f, Fy_f, Mz_f, t_s, h_s, a_s, hd_s, ad_s, t_end):
+def plot(t_f, Fy_f, Mz_f, t_s, h_s, a_s, hd_s, ad_s, t_end, t_start=0.0):
     t_fm, Fy_fm, Mz_fm = t_f, Fy_f, Mz_f
     Cl = Fy_fm / (Q_INF * AREF)
     Cm = Mz_fm / (Q_INF * AREF * 1.0)   # chord = 1.0 m
@@ -232,7 +230,7 @@ def plot(t_f, Fy_f, Mz_f, t_s, h_s, a_s, hd_s, ad_s, t_end):
     ax.plot(t_s, delta_s, "C6", lw=0.9)
     ax.set_ylabel("δ  [deg]")
     ax.set_xlabel("Time  [s]")
-    ax.set_xlim(0, t_end)
+    ax.set_xlim(t_start, t_end)
     ax.grid(True, lw=0.4, alpha=0.5)
 
     fig.tight_layout()
@@ -244,12 +242,14 @@ def plot(t_f, Fy_f, Mz_f, t_s, h_s, a_s, hd_s, ad_s, t_end):
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--t-end", type=float, default=2.0,
+    parser.add_argument("--t-end",   type=float, default=2.0,
                         help="Time horizon for plot [s] (default: 2.0)")
+    parser.add_argument("--t-start", type=float, default=0.0,
+                        help="Start time for plot [s] (default: 0.0)")
     args = parser.parse_args()
 
     t_f, Fy_f, Mz_f, t_s, h_s, a_s, hd_s, ad_s = reconstruct_structural(args.t_end)
-    plot(t_f, Fy_f, Mz_f, t_s, h_s, a_s, hd_s, ad_s, args.t_end)
+    plot(t_f, Fy_f, Mz_f, t_s, h_s, a_s, hd_s, ad_s, args.t_end, t_start=args.t_start)
 
 
 if __name__ == "__main__":

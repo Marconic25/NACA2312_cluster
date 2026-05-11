@@ -251,7 +251,7 @@ def integrate_structural(h0, hd0, a0, ad0, t_win, Fy_arr, Mz_arr):
     hd_arr    = sol.y[1]
     alpha_arr = sol.y[2]
     ad_arr    = sol.y[3]
-    return h_arr[-1], hd_arr[-1], alpha_arr[-1], ad_arr[-1], h_arr, alpha_arr
+    return h_arr[-1], hd_arr[-1], alpha_arr[-1], ad_arr[-1], h_arr, hd_arr, alpha_arr, ad_arr
 
 
 # ──────────────────────── motion file writers ────────────────────────────────
@@ -883,7 +883,7 @@ def main():
         print(f"  Forces: Fy_mean={np.mean(Fy_win):.1f}N  Mz_mean={np.mean(Mz_win):.3f}N·m")
 
         # Integrate structural dynamics over this window
-        h, hd, a, ad, h_traj, a_traj = integrate_structural(
+        h, hd, a, ad, h_traj, hd_traj, a_traj, ad_traj = integrate_structural(
             h, hd, a, ad, t_win, Fy_win, Mz_win
         )
         print(f"  Structural response end: h={h*1000:.3f}mm  α={np.degrees(a):.3f}°")
