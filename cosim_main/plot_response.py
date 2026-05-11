@@ -40,9 +40,9 @@ WINDOW_DT  = WINDOW * DT
 # Gust arrival time at wing leading edge (inlet at x=-10 m)
 T_GUST_ARRIVE = GUST_T_START + 10.0 / U_INF   # ≈ 0.125 s
 
-# Flap ramp window
-T_FLAP_START = DELTA_TIMES[1]
-T_FLAP_END   = DELTA_TIMES[2]
+# Flap ramp window (only meaningful when flap schedule is active)
+T_FLAP_START = DELTA_TIMES[-1]
+T_FLAP_END   = DELTA_TIMES[-1]
 
 
 def reconstruct_structural(t_end):
