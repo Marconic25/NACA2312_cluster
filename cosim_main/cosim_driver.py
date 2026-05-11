@@ -429,8 +429,10 @@ def update_control_dict(start_time, end_time, use_latest_time=False, write_inter
     content = re.sub(r"(endTime\s+)[\d.eE+\-]+\s*;",
                      f"\\g<1>{end_time:.10e};", content)
     if write_interval is not None:
+        # count=1: only replace the first occurrence (global writeInterval,
+        # before the functions{} block) — forces writeInterval stays at 1.
         content = re.sub(r"(writeInterval\s+)\d+\s*;",
-                         f"\\g<1>{write_interval};", content)
+                         f"\\g<1>{write_interval};", content, count=1)
     with open(path, "w") as f:
         f.write(content)
 
