@@ -85,52 +85,47 @@ T_FLAP_END   = DELTA_TIMES[-1]
 
 
 def reconstruct_structural(t_end):
-    """Read forces and replay structural integration to get h(t) and α(t)."""
+    """Read structural trajectory from CSV saved by driver, fallback to force integration."""
+    traj_file = CASE_DIR / "structural_trajectory.csv"
+
+    if traj_file.exists():
+        print(f"Reading structural trajectory from {traj_file.name} ...")
+        data = np.genfromtxt(traj_file, delimiter=",", skip_header=1)
+        mask = data[:, 0] <= t_end + 1e-9
+        data = data[mask]
+        t_arr = data[:, 0]
+        h_arr = data[:, 1] * 1000.0       # → mm
+        hd_arr = data[:, 2] * 1000.0      # → mm/s
+        a_arr = np.degrees(data[:, 3])    # → deg
+        ad_arr = np.degrees(data[:, 4])   # → deg/s
+        Fy_f = data[:, 5]
+        Mz_f = data[:, 6]
+        t_f = t_arr
+        print(f"  Loaded {len(t_arr)} samples, t=[{t_arr[0]:.5f}, {t_arr[-1]:.5f}] s")
+        return t_f, Fy_f, Mz_f, t_arr, h_arr, a_arr, hd_arr, ad_arr
+
+    # Fallback: read forces and integrate
     print(f"Reading forces up to t={t_end:.3f} s ...")
     t_f, Fy_f, Mz_f = read_all_forces(t_end)
-
-    # Remove duplicate timestamps (can occur at window boundaries)
     _, idx = np.unique(t_f, return_index=True)
     t_f, Fy_f, Mz_f = t_f[idx], Fy_f[idx], Mz_f[idx]
-    print(f"  Loaded {len(t_f)} force samples, t=[{t_f[0]:.5f}, {t_f[-1]:.5f}] s")
+    print(f"  Loaded {len(t_f)} force samples")
 
-    # Read initial structural state from cosim_state.json (set by driver at t=0)
     import json
-    state_file = CASE_DIR / "cosim_state.json"
-    h0, hd0, a0, ad0 = 0.0, 0.0, 0.0, 0.0
     t0_file = CASE_DIR / "cosim_state_t0.json"
+    h0, hd0, a0, ad0 = 0.0, 0.0, 0.0, 0.0
     if t0_file.exists():
         with open(t0_file) as f:
             s = json.load(f)
-        h0  = s.get("h",  0.0)
-        hd0 = s.get("hd", 0.0)
-        a0  = s.get("a",  0.0)
-        ad0 = s.get("ad", 0.0)
-        print(f"  Initial state from cosim_state_t0.json: h={h0*1000:.3f}mm  α={np.degrees(a0):.4f}°")
-    elif state_file.exists():
-        with open(state_file) as f:
-            s = json.load(f)
-        h0  = -163.12 / K_H
-        hd0 = 0.0
-        a0  = -8.138 / K_ALPHA
-        ad0 = 0.0
-        print(f"  Initial state from equilibrium fallback: h={h0*1000:.3f}mm  α={np.degrees(a0):.4f}°")
+        h0, hd0, a0, ad0 = s["h"], s["hd"], s["a"], s["ad"]
 
-    # Integrate over the full time range in one shot (no windowing artifacts)
-    h_f, hd_f, a_f, ad_f, h_arr_full, hd_arr, a_arr_full, ad_arr = integrate_structural(
+    h_f, hd_f, a_f, ad_f, h_arr, hd_arr, a_arr, ad_arr = integrate_structural(
         h0, hd0, a0, ad0, t_f, Fy_f, Mz_f
     )
-    t_arr = t_f
-
-    print(f"  Integrated full trajectory: h_final={h_f*1000:.2f} mm  α_final={np.degrees(a_f):.2f}°")
-
     return (
-        t_f, Fy_f, Mz_f,
-        t_arr,
-        h_arr_full * 1000.0,        # → mm
-        np.degrees(a_arr_full),     # → deg
-        hd_arr * 1000.0,            # → mm/s
-        np.degrees(ad_arr),         # → deg/s
+        t_f, Fy_f, Mz_f, t_f,
+        h_arr * 1000.0, np.degrees(a_arr),
+        hd_arr * 1000.0, np.degrees(ad_arr),
     )
 
 

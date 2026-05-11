@@ -770,6 +770,11 @@ def main():
     print(f"  MPI procs: {args.np}")
     print(f"  Case: {CASE_DIR}")
 
+    # Open structural trajectory CSV for writing
+    traj_path = CASE_DIR / "structural_trajectory.csv"
+    traj_file = open(traj_path, "w")
+    traj_file.write("t,h,hd,alpha,ad,Fy,Mz\n")
+
     while t_cur < t_end - 1e-12:
         t_win_end = min(t_cur + window_dt, t_end)
         t_win     = np.arange(t_cur, t_win_end + dt * 0.5, dt)
@@ -892,12 +897,25 @@ def main():
         )
         print(f"  Structural response end: h={h*1000:.3f}mm  α={np.degrees(a):.3f}°")
 
+        # Write trajectory to CSV
+        Fy_traj = np.interp(t_win, t_f, Fy_f) if t_f is not None else Fy_win
+        Mz_traj = np.interp(t_win, t_f, Mz_f) if t_f is not None else Mz_win
+        for i in range(len(t_win)):
+            traj_file.write(
+                f"{t_win[i]:.8e},{h_traj[i]:.8e},{hd_traj[i]:.8e},"
+                f"{a_traj[i]:.8e},{ad_traj[i]:.8e},"
+                f"{Fy_traj[i]:.6f},{Mz_traj[i]:.6f}\n"
+            )
+        traj_file.flush()
+
         t_cur = t_win_end
         window_idx += 1
         save_state(t_cur, h, hd, a, ad, window_idx, t_end, dt)
 
     print(f"\n{'='*60}")
+    traj_file.close()
     print(f"Co-simulation complete: {window_idx} windows, t_final={t_cur:.5f}s")
+    print(f"  Structural trajectory saved → {traj_path}")
 
     print("\n>>> Generating response plots...")
     subprocess.run(
