@@ -34,15 +34,15 @@ from cosim_driver import (
 CASE_DIR   = Path(__file__).parent
 FIG_DIR    = CASE_DIR / "figures"
 DT         = 7e-5
-WINDOW     = 286
+WINDOW     = 200   # must match --window argument used in cosim_driver
 WINDOW_DT  = WINDOW * DT
 
 # Gust arrival time at wing leading edge (inlet at x=-10 m)
 T_GUST_ARRIVE = GUST_T_START + 10.0 / U_INF   # ≈ 0.125 s
 
 # Flap ramp window
-T_FLAP_START = DELTA_TIMES[1]   # 0.8 s
-T_FLAP_END   = DELTA_TIMES[2]   # 1.0 s
+T_FLAP_START = DELTA_TIMES[1]
+T_FLAP_END   = DELTA_TIMES[2]
 
 
 def reconstruct_structural(t_end):
@@ -57,40 +57,15 @@ def reconstruct_structural(t_end):
     t_f, Fy_f, Mz_f = t_f[idx], Fy_f[idx], Mz_f[idx]
     print(f"  Loaded {len(t_f)} force samples, t=[{t_f[0]:.5f}, {t_f[-1]:.5f}] s")
 
-    h, hd, a, ad = 0.0, 0.0, 0.0, 0.0
-    t_cur = 0.0
-    t_hist, h_hist, hd_hist, a_hist, ad_hist = [], [], [], [], []
-
-    n_windows = 0
-    while t_cur < t_f[-1] - 1e-12:
-        t_win_end = min(t_cur + WINDOW_DT, t_f[-1])
-        t_win = np.arange(t_cur, t_win_end + DT * 0.5, DT)
-        if len(t_win) < 2:
-            break
-
-        Fy_win = np.interp(t_win, t_f, Fy_f, left=0.0, right=0.0)
-        Mz_win = np.interp(t_win, t_f, Mz_f, left=0.0, right=0.0)
-
-        h_f, hd_f, a_f, ad_f, h_arr, a_arr = integrate_structural(
-            h, hd, a, ad, t_win, Fy_win, Mz_win
-        )
-
-        t_hist.extend(t_win.tolist())
-        h_hist.extend(h_arr.tolist())
-        a_hist.extend(a_arr.tolist())
-
-        h, hd, a, ad = h_f, hd_f, a_f, ad_f
-        t_cur = t_win_end
-        n_windows += 1
-
-    # Compute velocities via finite differences on the reconstructed histories
-    t_arr = np.array(t_hist)
-    h_arr_full = np.array(h_hist)
-    a_arr_full = np.array(a_hist)
+    # Integrate over the full time range in one shot (no windowing artifacts)
+    h_f, hd_f, a_f, ad_f, h_arr_full, a_arr_full = integrate_structural(
+        0.0, 0.0, 0.0, 0.0, t_f, Fy_f, Mz_f
+    )
+    t_arr = t_f
     hd_arr = np.gradient(h_arr_full, t_arr)
     ad_arr = np.gradient(a_arr_full, t_arr)
 
-    print(f"  Replayed {n_windows} windows, final: h={h*1000:.2f} mm  α={np.degrees(a):.2f}°")
+    print(f"  Integrated full trajectory: h_final={h_f*1000:.2f} mm  α_final={np.degrees(a_f):.2f}°")
 
     return (
         t_f, Fy_f, Mz_f,
@@ -121,10 +96,7 @@ Q_INF = 0.5 * RHO * U_INF**2   # dynamic pressure [Pa]
 
 
 def plot(t_f, Fy_f, Mz_f, t_s, h_s, a_s, hd_s, ad_s, t_end):
-    # Skip first two windows: large initialisation transient from mapFields
-    T_SKIP = 2 * WINDOW_DT
-    mask = t_f >= T_SKIP
-    t_fm, Fy_fm, Mz_fm = t_f[mask], Fy_f[mask], Mz_f[mask]
+    t_fm, Fy_fm, Mz_fm = t_f, Fy_f, Mz_f
     Cl = Fy_fm / (Q_INF * AREF)
     Cm = Mz_fm / (Q_INF * AREF * 1.0)   # chord = 1.0 m
 

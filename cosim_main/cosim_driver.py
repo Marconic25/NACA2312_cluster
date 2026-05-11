@@ -79,11 +79,9 @@ GUST_W0      = 0.0    # peak gust velocity [m/s]  — temporaneamente a zero (no
 GUST_T_START = 0.0    # gust onset [s]
 GUST_T_END   = 0.8    # gust end [s]
 
-# Flap schedule: δ(t) in degrees — prescribed kinematic input.
-# Gust excites wing (0→0.8s, flap at 0°), then flap deploys as control action:
-# ramp 0°→15° over 0.8→1.0s, held at 15° for remainder.
-DELTA_TIMES  = [0.0,  0.8,  1.0,  2.0]   # [s]
-DELTA_ANGLES = [0.0,  0.0,  15.0, 15.0]  # [deg]
+# Flap schedule: δ(t) in degrees — temporaneamente a zero (no flap, no gust)
+DELTA_TIMES  = [0.0,  2.0]   # [s]
+DELTA_ANGLES = [0.0,  0.0]   # [deg]
 
 
 def delta_schedule(t):
