@@ -486,7 +486,7 @@ def run_map_fields():
         "apptainer", "exec", CONTAINER,
         "/bin/bash", "-c",
         f"source /opt/openfoam7/etc/bashrc && cd {str(CASE_DIR)} && "
-        f"mapFields {str(RANS_DIR)} -sourceTime latestTime -consistent"
+        f"mapFields ../rans_baseline -sourceTime latestTime -consistent"
     ]
     result = subprocess.run(cmd, cwd=CASE_DIR, capture_output=True, text=True)
     if result.returncode != 0:
