@@ -30,6 +30,7 @@ from cosim_driver import (
     DELTA_TIMES, DELTA_ANGLES,
     delta_schedule,
     CASE_DIR as _CASE_DIR,
+    K_H, K_ALPHA,
 )
 import re as _re
 
@@ -100,12 +101,14 @@ def reconstruct_structural(t_end):
     if state_file.exists():
         with open(state_file) as f:
             s = json.load(f)
-        # window_idx=0 entry has the initial equilibrium state
-        h0  = s.get("h",  0.0)
-        hd0 = s.get("hd", 0.0)
-        a0  = s.get("a",  0.0)
-        ad0 = s.get("ad", 0.0)
-        print(f"  Initial state from cosim_state.json: h={h0*1000:.3f}mm  α={np.degrees(a0):.4f}°")
+        # cosim_state.json is overwritten each window — at end of sim it has final state.
+        # We only use h0/a0 (equilibrium position); velocities start at 0 since the
+        # structural system starts from rest at the static equilibrium point.
+        h0  = s.get("h",  0.0) if s.get("t_cur", 1.0) < 1e-6 else -163.12 / K_H
+        a0  = s.get("a",  0.0) if s.get("t_cur", 1.0) < 1e-6 else -8.138  / K_ALPHA
+        hd0 = 0.0
+        ad0 = 0.0
+        print(f"  Initial state: h={h0*1000:.3f}mm  α={np.degrees(a0):.4f}°")
 
     # Integrate over the full time range in one shot (no windowing artifacts)
     h_f, hd_f, a_f, ad_f, h_arr_full, hd_arr, a_arr_full, ad_arr = integrate_structural(
