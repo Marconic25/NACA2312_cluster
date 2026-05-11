@@ -50,7 +50,7 @@ def read_all_forces(t_end):
                 if len(nums) < 19:
                     continue
                 samples_in_window += 1
-                if samples_in_window <= 2:   # skip first 2 samples (restart transient)
+                if samples_in_window <= 5:   # skip first 5 samples (restart transient)
                     continue
                 t = float(nums[0])
                 if t > t_end + 1e-12:

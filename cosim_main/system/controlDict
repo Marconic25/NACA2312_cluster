@@ -52,7 +52,7 @@ functions
         type                forces;
         libs                ("libforces.so");
         writeControl        timeStep;
-        writeInterval       1;
+        writeInterval       10;
         patches             (wing_main flap);
         rho                 rhoInf;
         log                 true;
@@ -65,7 +65,7 @@ functions
         type                forceCoeffs;
         libs                ("libforces.so");
         writeControl        timeStep;
-        writeInterval       1;
+        writeInterval       10;
         patches             (wing_main flap);
         rho                 rhoInf;
         log                 true;
