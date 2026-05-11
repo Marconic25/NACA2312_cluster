@@ -452,6 +452,11 @@ def reset_case(orig_dir="0.orig"):
     if log_pimple.exists():
         log_pimple.unlink()
         print("  Removed log.pimpleFoam")
+    # Remove postProcessing so force data from previous runs is not mixed in
+    pp_dir = CASE_DIR / "postProcessing"
+    if pp_dir.exists():
+        shutil.rmtree(pp_dir)
+        print("  Removed postProcessing/")
     # Remove all processor directories entirely (decomposePar recreates them)
     for proc in sorted(CASE_DIR.glob("processor*")):
         shutil.rmtree(proc)
