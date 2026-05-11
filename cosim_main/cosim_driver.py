@@ -741,6 +741,10 @@ def main():
                             t_seed, np.zeros(2), h_seed, a_seed_deg)
         # Save initial state (includes t_end and dt for restart)
         save_state(0.0, h, hd, a, ad, 0, t_end, dt)
+        # Save initial state separately for plot reconstruction
+        import json as _json
+        with open(CASE_DIR / "cosim_state_t0.json", "w") as _f:
+            _json.dump({"h": h, "hd": hd, "a": a, "ad": ad}, _f, indent=2)
         run_decompose(dt)
     else:
         # Restore full state from JSON (includes t_end and dt)

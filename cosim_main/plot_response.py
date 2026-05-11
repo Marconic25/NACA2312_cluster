@@ -98,17 +98,23 @@ def reconstruct_structural(t_end):
     import json
     state_file = CASE_DIR / "cosim_state.json"
     h0, hd0, a0, ad0 = 0.0, 0.0, 0.0, 0.0
-    if state_file.exists():
+    t0_file = CASE_DIR / "cosim_state_t0.json"
+    if t0_file.exists():
+        with open(t0_file) as f:
+            s = json.load(f)
+        h0  = s.get("h",  0.0)
+        hd0 = s.get("hd", 0.0)
+        a0  = s.get("a",  0.0)
+        ad0 = s.get("ad", 0.0)
+        print(f"  Initial state from cosim_state_t0.json: h={h0*1000:.3f}mm  α={np.degrees(a0):.4f}°")
+    elif state_file.exists():
         with open(state_file) as f:
             s = json.load(f)
-        # cosim_state.json is overwritten each window — at end of sim it has final state.
-        # We only use h0/a0 (equilibrium position); velocities start at 0 since the
-        # structural system starts from rest at the static equilibrium point.
-        h0  = s.get("h",  0.0) if s.get("t_cur", 1.0) < 1e-6 else -163.12 / K_H
-        a0  = s.get("a",  0.0) if s.get("t_cur", 1.0) < 1e-6 else -8.138  / K_ALPHA
+        h0  = -163.12 / K_H
         hd0 = 0.0
+        a0  = -8.138 / K_ALPHA
         ad0 = 0.0
-        print(f"  Initial state: h={h0*1000:.3f}mm  α={np.degrees(a0):.4f}°")
+        print(f"  Initial state from equilibrium fallback: h={h0*1000:.3f}mm  α={np.degrees(a0):.4f}°")
 
     # Integrate over the full time range in one shot (no windowing artifacts)
     h_f, hd_f, a_f, ad_f, h_arr_full, hd_arr, a_arr_full, ad_arr = integrate_structural(
