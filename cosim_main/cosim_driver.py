@@ -915,7 +915,7 @@ def main():
     # Write CSV with global smoothing on Fy/Mz (eliminates inter-window discontinuities)
     if traj_buf:
         traj_arr = np.array(traj_buf)
-        k = 11  # smoothing kernel: 11 × 1.4e-3s ≈ 0.015s (≈ 1 window)
+        k = 31  # smoothing kernel: 31 × 1.4e-3s ≈ 0.043s (≈ 3 window, covers inter-window steps)
         def _smooth_global(x):
             out = np.convolve(x, np.ones(k) / k, mode='same')
             h2 = k // 2
