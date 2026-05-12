@@ -899,13 +899,19 @@ def main():
         print(f"  Structural response end: h={h*1000:.3f}mm  α={np.degrees(a):.3f}°")
 
         # Write trajectory to CSV — skip first N points (restart transient)
+        # Apply 5-point moving average to Fy/Mz for smooth ML dataset
         skip = 10 if window_idx == 0 else 2
-        # Use forces already filtered (Fy_win/Mz_win have transient removed)
+        def _smooth5(x):
+            out = np.convolve(x, np.ones(5) / 5.0, mode='same')
+            out[:2] = x[:2]; out[-2:] = x[-2:]
+            return out
+        Fy_smooth = _smooth5(Fy_win)
+        Mz_smooth = _smooth5(Mz_win)
         for i in range(skip, len(t_win)):
             traj_file.write(
                 f"{t_win[i]:.8e},{h_traj[i]:.8e},{hd_traj[i]:.8e},"
                 f"{a_traj[i]:.8e},{ad_traj[i]:.8e},"
-                f"{Fy_win[i]:.6f},{Mz_win[i]:.6f}\n"
+                f"{Fy_smooth[i]:.6f},{Mz_smooth[i]:.6f}\n"
             )
         traj_file.flush()
 

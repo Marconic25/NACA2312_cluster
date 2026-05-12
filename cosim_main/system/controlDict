@@ -27,7 +27,7 @@ deltaT          7e-5;
 writeControl    timeStep;
 writeInterval   286;
 
-purgeWrite      0;
+purgeWrite      1;
 writeFormat     binary;
 writePrecision  10;
 writeCompression off;
@@ -52,7 +52,7 @@ functions
         type                forces;
         libs                ("libforces.so");
         writeControl        timeStep;
-        writeInterval       10;
+        writeInterval       20;
         patches             (wing_main flap);
         rho                 rhoInf;
         log                 true;
@@ -65,7 +65,7 @@ functions
         type                forceCoeffs;
         libs                ("libforces.so");
         writeControl        timeStep;
-        writeInterval       10;
+        writeInterval       20;
         patches             (wing_main flap);
         rho                 rhoInf;
         log                 true;
