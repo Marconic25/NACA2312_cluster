@@ -915,17 +915,16 @@ def main():
     print(f"\n{'='*60}")
     print(f"Co-simulation complete: {window_idx} windows, t_final={t_cur:.5f}s")
 
-    # Write CSV with global smoothing on Fy/Mz (eliminates inter-window discontinuities)
+    # Write CSV with global Gaussian smoothing on Fy/Mz
+    # Gaussian kernel is better than box filter: weights central samples more,
+    # attenuates window-boundary discontinuities without flat-top ringing.
+    # sigma=15 samples × 1.4e-3s = 0.021s, effective width ~6*sigma = 0.126s
     if traj_buf:
+        from scipy.ndimage import gaussian_filter1d
         traj_arr = np.array(traj_buf)
-        k = 51  # smoothing kernel: 51 × 1.4e-3s ≈ 0.071s (≈ 1 period f_α, covers 2 windows)
-        def _smooth_global(x):
-            out = np.convolve(x, np.ones(k) / k, mode='same')
-            h2 = k // 2
-            out[:h2] = x[:h2]; out[-h2:] = x[-h2:]
-            return out
-        Fy_s = _smooth_global(traj_arr[:, 5])
-        Mz_s = _smooth_global(traj_arr[:, 6])
+        sigma = 15  # Gaussian sigma in samples (1.4e-3s each → 0.021s)
+        Fy_s = gaussian_filter1d(traj_arr[:, 5], sigma=sigma)
+        Mz_s = gaussian_filter1d(traj_arr[:, 6], sigma=sigma)
         with open(traj_path, "w") as f:
             f.write("t,h,hd,alpha,ad,Fy,Mz\n")
             for i, row in enumerate(traj_arr):
