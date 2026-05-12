@@ -100,6 +100,19 @@ def reconstruct_structural(t_end):
         ad_arr = np.degrees(data[:, 4])   # → deg/s
         Fy_f = data[:, 5]
         Mz_f = data[:, 6]
+        # Remove spike outliers (restart transient) using median filter threshold
+        from scipy.signal import medfilt
+        Fy_med = medfilt(Fy_f, kernel_size=5)
+        Mz_med = medfilt(Mz_f, kernel_size=5)
+        spike_mask = (np.abs(Fy_f - Fy_med) < 3 * np.std(Fy_f - Fy_med)) & \
+                     (np.abs(Mz_f - Mz_med) < 3 * np.std(Mz_f - Mz_med))
+        t_arr = t_arr[spike_mask]
+        h_arr = h_arr[spike_mask]
+        hd_arr = hd_arr[spike_mask]
+        a_arr = a_arr[spike_mask]
+        ad_arr = ad_arr[spike_mask]
+        Fy_f = Fy_med[spike_mask]
+        Mz_f = Mz_med[spike_mask]
         t_f = t_arr
         print(f"  Loaded {len(t_arr)} samples, t=[{t_arr[0]:.5f}, {t_arr[-1]:.5f}] s")
         return t_f, Fy_f, Mz_f, t_arr, h_arr, a_arr, hd_arr, ad_arr
