@@ -11,4 +11,4 @@ source /software/spack/share/spack/setup-env.sh
 source /work/u10677113/NACA2312/my_venv/bin/activate
 
 cd cosim_main
-python3 cosim_driver.py --np 16 --window 200 --t-end 10.0 2>&1 | tee log.cosim_driver
+python3 cosim_driver.py --np 16 --window 500 --t-end 10.0 2>&1 | tee log.cosim_driver
