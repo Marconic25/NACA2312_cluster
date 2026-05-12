@@ -898,9 +898,12 @@ def main():
         print(f"  Structural response end: h={h*1000:.3f}mm  α={np.degrees(a):.3f}°")
 
         # Accumulate trajectory in global buffer (smoothing applied once at end)
+        # Decimate by 4: with writeInterval=5 and dt=7e-5 → sample every 4 points = 1.4e-3s
         skip = 10 if window_idx == 0 else 2
         for i in range(skip, len(t_win)):
             if t_win[i] < T_CSV_SKIP:
+                continue
+            if (i - skip) % 4 != 0:
                 continue
             traj_buf.append((t_win[i], h_traj[i], hd_traj[i],
                              a_traj[i], ad_traj[i], Fy_win[i], Mz_win[i]))
