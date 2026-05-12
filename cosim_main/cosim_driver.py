@@ -880,9 +880,10 @@ def main():
         # Read aerodynamic forces from this window
         t_f, Fy_f, Mz_f = read_forces(t_cur, t_win_end)
         if t_f is not None:
-            # Window 0: skip first 10 samples (mapFields transient — Cl can be 5x normal)
-            if window_idx == 0 and len(t_f) > 10:
-                t_f, Fy_f, Mz_f = t_f[10:], Fy_f[10:], Mz_f[10:]
+            # Skip first samples of each window (pimpleFoam restart transient)
+            n_skip = 10 if window_idx == 0 else 2
+            if len(t_f) > n_skip:
+                t_f, Fy_f, Mz_f = t_f[n_skip:], Fy_f[n_skip:], Mz_f[n_skip:]
             Fy_win = np.interp(t_win, t_f, Fy_f, left=Fy_f[0], right=Fy_f[-1])
             Mz_win = np.interp(t_win, t_f, Mz_f, left=Mz_f[0], right=Mz_f[-1])
         else:
