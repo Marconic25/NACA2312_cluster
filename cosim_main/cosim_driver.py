@@ -770,10 +770,9 @@ def main():
     print(f"  MPI procs: {args.np}")
     print(f"  Case: {CASE_DIR}")
 
-    # Open structural trajectory CSV for writing
     traj_path = CASE_DIR / "structural_trajectory.csv"
-    traj_file = open(traj_path, "w")
-    traj_file.write("t,h,hd,alpha,ad,Fy,Mz\n")
+    T_CSV_SKIP = 0.1   # skip initial CFD transient from CSV
+    traj_buf = []      # global buffer: accumulate all windows, smooth once at end
 
     while t_cur < t_end - 1e-12:
         t_win_end = min(t_cur + window_dt, t_end)
@@ -898,30 +897,38 @@ def main():
         )
         print(f"  Structural response end: h={h*1000:.3f}mm  α={np.degrees(a):.3f}°")
 
-        # Write trajectory to CSV — skip first N points (restart transient)
-        # Apply 5-point moving average to Fy/Mz for smooth ML dataset
+        # Accumulate trajectory in global buffer (smoothing applied once at end)
         skip = 10 if window_idx == 0 else 2
-        def _smooth5(x):
-            out = np.convolve(x, np.ones(5) / 5.0, mode='same')
-            out[:2] = x[:2]; out[-2:] = x[-2:]
-            return out
-        Fy_smooth = _smooth5(Fy_win)
-        Mz_smooth = _smooth5(Mz_win)
         for i in range(skip, len(t_win)):
-            traj_file.write(
-                f"{t_win[i]:.8e},{h_traj[i]:.8e},{hd_traj[i]:.8e},"
-                f"{a_traj[i]:.8e},{ad_traj[i]:.8e},"
-                f"{Fy_smooth[i]:.6f},{Mz_smooth[i]:.6f}\n"
-            )
-        traj_file.flush()
+            if t_win[i] < T_CSV_SKIP:
+                continue
+            traj_buf.append((t_win[i], h_traj[i], hd_traj[i],
+                             a_traj[i], ad_traj[i], Fy_win[i], Mz_win[i]))
 
         t_cur = t_win_end
         window_idx += 1
         save_state(t_cur, h, hd, a, ad, window_idx, t_end, dt)
 
     print(f"\n{'='*60}")
-    traj_file.close()
     print(f"Co-simulation complete: {window_idx} windows, t_final={t_cur:.5f}s")
+
+    # Write CSV with global smoothing on Fy/Mz (eliminates inter-window discontinuities)
+    if traj_buf:
+        traj_arr = np.array(traj_buf)
+        k = 11  # smoothing kernel: 11 × 1.4e-3s ≈ 0.015s (≈ 1 window)
+        def _smooth_global(x):
+            out = np.convolve(x, np.ones(k) / k, mode='same')
+            h2 = k // 2
+            out[:h2] = x[:h2]; out[-h2:] = x[-h2:]
+            return out
+        Fy_s = _smooth_global(traj_arr[:, 5])
+        Mz_s = _smooth_global(traj_arr[:, 6])
+        with open(traj_path, "w") as f:
+            f.write("t,h,hd,alpha,ad,Fy,Mz\n")
+            for i, row in enumerate(traj_arr):
+                f.write(f"{row[0]:.8e},{row[1]:.8e},{row[2]:.8e},"
+                        f"{row[3]:.8e},{row[4]:.8e},"
+                        f"{Fy_s[i]:.6f},{Mz_s[i]:.6f}\n")
     print(f"  Structural trajectory saved → {traj_path}")
 
     print("\n>>> Generating response plots...")
