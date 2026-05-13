@@ -464,9 +464,12 @@ def reset_case(orig_dir="0.orig"):
     pp_dir = CASE_DIR / "postProcessing"
     if pp_dir.exists():
         shutil.rmtree(pp_dir, ignore_errors=True)
-        if pp_dir.exists():  # fallback for NFS
+        if pp_dir.exists():  # fallback for NFS — ignore .nfs* busy files
             import subprocess as _sp
-            _sp.run(["rm", "-rf", str(pp_dir)], check=True)
+            _sp.run(["rm", "-rf", str(pp_dir)])
+            # Rename remaining dir so it doesn't interfere with new postProcessing
+            if pp_dir.exists():
+                pp_dir.rename(pp_dir.parent / f"postProcessing_old_{os.getpid()}")
         print("  Removed postProcessing/")
     # Remove all processor directories entirely (decomposePar recreates them)
     # NOTE: checkpoint/ is never removed — it's a permanent warm-start snapshot
