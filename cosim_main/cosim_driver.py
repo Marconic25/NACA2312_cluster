@@ -124,7 +124,7 @@ def write_gust_inlet(inlet_file=None):
     Called once at fresh start, before decomposePar.
     """
     if inlet_file is None:
-        inlet_file = CASE_DIR / "0.orig" / "include" / "fixedInlet"
+        inlet_file = CASE_DIR / "0.orig" / "include" / "fixedInletU"
 
     T_g = GUST_T_END - GUST_T_START
 

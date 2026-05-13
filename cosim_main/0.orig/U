@@ -22,7 +22,7 @@ internalField   uniform $flowVelocity;
 
 boundaryField
 {
-    #include "include/fixedInlet"
+    #include "include/fixedInletU"
 
     outlet
     {
