@@ -466,6 +466,7 @@ def reset_case(orig_dir="0.orig"):
         shutil.rmtree(pp_dir)
         print("  Removed postProcessing/")
     # Remove all processor directories entirely (decomposePar recreates them)
+    # NOTE: checkpoint/ is never removed — it's a permanent warm-start snapshot
     for proc in sorted(CASE_DIR.glob("processor*")):
         shutil.rmtree(proc)
         print(f"  Removed {proc.name}/")
@@ -618,6 +619,96 @@ def load_state():
             s["window_idx"], s["t_end"], s["dt"])
 
 
+CHECKPOINT_DIR = CASE_DIR / "checkpoint"
+
+
+def save_checkpoint(t_chk, h, hd, a, ad, dt):
+    """Save warm-start checkpoint: processor dirs + structural state, reset time to 0."""
+    print(f"\n  Saving checkpoint at t={t_chk:.4f}s → checkpoint/ ...")
+    CHECKPOINT_DIR.mkdir(exist_ok=True)
+
+    # Copy processor dirs (keep only latest time dir to save space)
+    for proc in sorted(CASE_DIR.glob("processor*")):
+        dst = CHECKPOINT_DIR / proc.name
+        if dst.exists():
+            shutil.rmtree(dst)
+        # Find latest time dir in this processor
+        time_dirs = []
+        for d in proc.iterdir():
+            if d.is_dir():
+                try:
+                    time_dirs.append((float(d.name), d))
+                except ValueError:
+                    pass
+        latest_t, latest_d = max(time_dirs)
+        # Copy: constant/ + latest time dir only
+        shutil.copytree(proc / "constant", dst / "constant")
+        shutil.copytree(latest_d, dst / "0")  # rename to 0 for clean restart
+        print(f"    Copied {proc.name}/  (t={latest_t:.4f} → 0)")
+
+    # Save structural state at checkpoint (t reset to 0)
+    chk_state = {"t_cur": 0.0, "h": h, "hd": hd, "a": a, "ad": ad,
+                 "window_idx": 0, "t_end": 0.0, "dt": dt,
+                 "t_checkpoint_orig": t_chk}
+    with open(CHECKPOINT_DIR / "cosim_state.json", "w") as f:
+        json.dump(chk_state, f, indent=2)
+    with open(CHECKPOINT_DIR / "cosim_state_t0.json", "w") as f:
+        json.dump({"h": h, "hd": hd, "a": a, "ad": ad}, f, indent=2)
+
+    # Copy motion tables
+    for dat in ["wingMotion.dat", "flapMotion.dat", "wingMotion_zero.dat"]:
+        src = CONST_DIR / dat
+        if src.exists():
+            shutil.copy2(src, CHECKPOINT_DIR / dat)
+
+    print(f"  Checkpoint saved → {CHECKPOINT_DIR}")
+    print(f"    h={h*1000:.3f}mm  α={np.degrees(a):.4f}°  hd={hd*1000:.3f}mm/s")
+
+
+def load_from_checkpoint(t_end, dt):
+    """Restore warm-start from checkpoint/: copy processor dirs back, reset time to 0."""
+    if not CHECKPOINT_DIR.exists():
+        raise RuntimeError(f"Checkpoint not found at {CHECKPOINT_DIR}")
+    print(f"\n--- Loading checkpoint from {CHECKPOINT_DIR} ---")
+
+    # Remove existing processor dirs
+    for proc in sorted(CASE_DIR.glob("processor*")):
+        shutil.rmtree(proc)
+
+    # Restore processor dirs from checkpoint (time dir is already named 0)
+    for chk_proc in sorted(CHECKPOINT_DIR.glob("processor*")):
+        dst = CASE_DIR / chk_proc.name
+        shutil.copytree(chk_proc, dst)
+    print(f"  Restored {len(list(CHECKPOINT_DIR.glob('processor*')))} processor dirs")
+
+    # Patch matchTolerance in all restored processor boundary files
+    import re as _re
+    for proc in sorted(CASE_DIR.glob("processor*")):
+        bnd = proc / "constant" / "polyMesh" / "boundary"
+        if bnd.exists():
+            txt = bnd.read_text()
+            txt = _re.sub(r"matchTolerance\s+[\d.eE+\-]+\s*;",
+                          "matchTolerance  1e-3;", txt)
+            bnd.write_text(txt)
+
+    # Load structural state
+    with open(CHECKPOINT_DIR / "cosim_state.json") as f:
+        s = json.load(f)
+    h, hd, a, ad = s["h"], s["hd"], s["a"], s["ad"]
+    t_orig = s.get("t_checkpoint_orig", 0.0)
+    print(f"  Structural state: h={h*1000:.3f}mm  α={np.degrees(a):.4f}°")
+    print(f"  Original checkpoint time: t={t_orig:.3f}s → restarting as t=0")
+
+    # Copy cosim_state_t0.json for plot
+    shutil.copy2(CHECKPOINT_DIR / "cosim_state_t0.json",
+                 CASE_DIR / "cosim_state_t0.json")
+
+    # Update controlDict to start from t=0
+    update_control_dict(0.0, dt, use_latest_time=False, write_interval=None)
+
+    return h, hd, a, ad
+
+
 def compute_static_equilibrium():
     """
     Estimate static equilibrium (h_eq, alpha_eq) from RANS forces.
@@ -707,7 +798,20 @@ def main():
                              "use when controlDict endTime was modified by a previous window)")
     parser.add_argument("--dt",      type=float, default=None,
                         help="Nominal timestep [s] for window sizing (overrides controlDict deltaT)")
+    parser.add_argument("--save-checkpoint", type=float, default=None, metavar="T",
+                        help="Save warm-start checkpoint when t >= T [s]")
+    parser.add_argument("--from-checkpoint", action="store_true",
+                        help="Start from checkpoint/ instead of fresh RANS mapFields")
+    parser.add_argument("--gust-w0",      type=float, default=None, help="Peak gust velocity [m/s]")
+    parser.add_argument("--gust-t-start", type=float, default=None, help="Gust start time [s]")
+    parser.add_argument("--gust-t-end",   type=float, default=None, help="Gust end time [s]")
     args = parser.parse_args()
+
+    # Override gust parameters from CLI if provided
+    global GUST_W0, GUST_T_START, GUST_T_END
+    if args.gust_w0      is not None: GUST_W0      = args.gust_w0
+    if args.gust_t_start is not None: GUST_T_START = args.gust_t_start
+    if args.gust_t_end   is not None: GUST_T_END   = args.gust_t_end
 
     # Structural state
     h, hd, a, ad = 0.0, 0.0, 0.0, 0.0
@@ -715,21 +819,28 @@ def main():
     window_idx = 0
 
     if not args.restart:
-        # Fresh start: t_end/dt from CLI → state file → controlDict (in priority order).
-        # controlDict endTime is NOT reliable here: previous windows overwrite it.
         saved = load_state()
         dt    = (args.dt    if args.dt    is not None
                  else (saved[7] if saved is not None else read_control_dict_value("deltaT")))
         t_end = (args.t_end if args.t_end is not None
                  else (saved[6] if saved is not None else read_control_dict_value("endTime")))
-        print("\n--- Fresh start ---")
-        write_gust_inlet()   # regenerate fixedInlet with current gust parameters
-        reset_case()         # copies 0.orig → 0, removes processor* and postProcessing
-        run_map_fields()     # map RANS steady solution as IC
-        run_toposet()        # rebuild wingZone/flapZone cell sets
-        # Initialise structural state at static equilibrium to suppress transient
-        h, a = compute_static_equilibrium()
-        hd, ad = 0.0, 0.0
+
+        if args.from_checkpoint:
+            # Warm start from checkpoint/ — no mapFields, no transient
+            print("\n--- Warm start from checkpoint ---")
+            write_gust_inlet()          # write (possibly new) gust BC
+            reset_case()                # clean processor*, postProcessing (keeps checkpoint/)
+            h, hd, a, ad = load_from_checkpoint(t_end, dt)
+            run_toposet()               # rebuild wingZone/flapZone on restored mesh
+        else:
+            # Cold fresh start from RANS
+            print("\n--- Fresh start ---")
+            write_gust_inlet()
+            reset_case()
+            run_map_fields()
+            run_toposet()
+            h, a = compute_static_equilibrium()
+            hd, ad = 0.0, 0.0
         # Seed motion tables at equilibrium position for the full simulation duration
         window_dt = args.window * dt
         t_seed = np.array([0.0, t_end + window_dt])
@@ -911,6 +1022,12 @@ def main():
         t_cur = t_win_end
         window_idx += 1
         save_state(t_cur, h, hd, a, ad, window_idx, t_end, dt)
+
+        # Save checkpoint if requested and time threshold crossed (only once)
+        if (args.save_checkpoint is not None and
+                t_cur >= args.save_checkpoint and
+                not (CHECKPOINT_DIR / "cosim_state.json").exists()):
+            save_checkpoint(t_cur, h, hd, a, ad, dt)
 
     print(f"\n{'='*60}")
     print(f"Co-simulation complete: {window_idx} windows, t_final={t_cur:.5f}s")
