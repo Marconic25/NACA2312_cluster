@@ -647,9 +647,16 @@ def save_checkpoint(t_chk, h, hd, a, ad, dt):
                 except ValueError:
                     pass
         latest_t, latest_d = max(time_dirs)
-        # Copy: constant/ + latest time dir only
+        # Copy: constant/ + latest time dir (renamed to 0)
         shutil.copytree(proc / "constant", dst / "constant")
         shutil.copytree(latest_d, dst / "0")  # rename to 0 for clean restart
+        # Also copy include/ from processor*/0/ (contains fixedInletU BC)
+        src_inc = proc / "0" / "include"
+        if src_inc.exists():
+            dst_inc = dst / "0" / "include"
+            if dst_inc.exists():
+                shutil.rmtree(dst_inc)
+            shutil.copytree(src_inc, dst_inc)
         print(f"    Copied {proc.name}/  (t={latest_t:.4f} → 0)")
 
     # Save structural state at checkpoint (t reset to 0)
