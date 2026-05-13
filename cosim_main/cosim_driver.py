@@ -717,15 +717,19 @@ def load_from_checkpoint(t_end, dt):
     # Update controlDict to start from t=0
     update_control_dict(0.0, dt, use_latest_time=False, write_interval=None)
 
-    # Propagate new fixedInletU (with gust BC) to all processor dirs
-    # The checkpoint processor dirs have the old gust-free BC — must be updated.
-    inlet_src = CASE_DIR / "0.orig" / "include" / "fixedInlet"
-    if inlet_src.exists():
-        for proc in sorted(CASE_DIR.glob("processor*")):
-            inc_dir = proc / "0" / "include"
-            inc_dir.mkdir(exist_ok=True)
-            shutil.copy2(inlet_src, inc_dir / "fixedInlet")
-        print(f"  Propagated fixedInlet (gust BC) to all processor dirs")
+    # The checkpoint processor dirs have the BC from the baseline run (no gust).
+    # OF reads U BC from the binary field in processor*/0/U — copying fixedInlet
+    # text file is not enough. We need to re-decompose the 0/ directory so that
+    # the new codedFixedValue BC is properly embedded in the processor U fields.
+    # Strategy: keep checkpoint time dirs (for CFD state), but re-decompose 0/
+    # by temporarily removing processor*/0/ and running decomposePar.
+    print("  Re-decomposing 0/ to propagate new gust BC to processor dirs...")
+    for proc in sorted(CASE_DIR.glob("processor*")):
+        zero_dir = proc / "0"
+        if zero_dir.exists():
+            shutil.rmtree(zero_dir)
+    run_decompose(dt)
+    print("  Gust BC propagated via decomposePar")
 
     return h, hd, a, ad
 
@@ -877,12 +881,9 @@ def main():
         import json as _json
         with open(CASE_DIR / "cosim_state_t0.json", "w") as _f:
             _json.dump({"h": h, "hd": hd, "a": a, "ad": ad}, _f, indent=2)
-        if not args.from_checkpoint:
-            # decomposePar only for cold start — checkpoint already has processor dirs
-            run_decompose(dt)
-        else:
-            # Patch matchTolerance already done in load_from_checkpoint
-            print("  Skipping decomposePar — using checkpoint processor dirs")
+        # decomposePar always needed — for cold start creates all processor dirs,
+        # for checkpoint re-creates processor*/0/ with updated BC (gust inlet)
+        run_decompose(dt)
     else:
         # Restore full state from JSON (includes t_end and dt)
         saved = load_state()
