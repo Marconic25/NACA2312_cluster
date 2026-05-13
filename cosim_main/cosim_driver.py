@@ -723,6 +723,14 @@ def load_from_checkpoint(t_end, dt):
     # the new codedFixedValue BC is properly embedded in the processor U fields.
     # Strategy: keep checkpoint time dirs (for CFD state), but re-decompose 0/
     # by temporarily removing processor*/0/ and running decomposePar.
+    # Ensure 0/ is a clean copy of 0.orig (mapFields may have corrupted it)
+    zero = CASE_DIR / "0"
+    orig = CASE_DIR / "0.orig"
+    if zero.exists():
+        shutil.rmtree(zero)
+    shutil.copytree(orig, zero)
+
+    # Remove processor*/0/ and re-decompose to embed new gust BC in binary U fields
     print("  Re-decomposing 0/ to propagate new gust BC to processor dirs...")
     for proc in sorted(CASE_DIR.glob("processor*")):
         zero_dir = proc / "0"
