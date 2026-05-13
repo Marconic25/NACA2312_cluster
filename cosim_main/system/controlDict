@@ -27,7 +27,7 @@ deltaT          7e-5;
 writeControl    timeStep;
 writeInterval   286;
 
-purgeWrite      1;
+purgeWrite      2;
 writeFormat     binary;
 writePrecision  10;
 writeCompression off;
