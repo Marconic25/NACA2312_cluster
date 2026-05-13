@@ -861,7 +861,12 @@ def main():
         import json as _json
         with open(CASE_DIR / "cosim_state_t0.json", "w") as _f:
             _json.dump({"h": h, "hd": hd, "a": a, "ad": ad}, _f, indent=2)
-        run_decompose(dt)
+        if not args.from_checkpoint:
+            # decomposePar only for cold start — checkpoint already has processor dirs
+            run_decompose(dt)
+        else:
+            # Patch matchTolerance already done in load_from_checkpoint
+            print("  Skipping decomposePar — using checkpoint processor dirs")
     else:
         # Restore full state from JSON (includes t_end and dt)
         saved = load_state()
