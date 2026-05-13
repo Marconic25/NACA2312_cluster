@@ -723,21 +723,21 @@ def load_from_checkpoint(t_end, dt):
     # the new codedFixedValue BC is properly embedded in the processor U fields.
     # Strategy: keep checkpoint time dirs (for CFD state), but re-decompose 0/
     # by temporarily removing processor*/0/ and running decomposePar.
-    # Ensure 0/ is a clean copy of 0.orig (mapFields may have corrupted it)
-    zero = CASE_DIR / "0"
-    orig = CASE_DIR / "0.orig"
-    if zero.exists():
-        shutil.rmtree(zero)
-    shutil.copytree(orig, zero)
-
-    # Remove processor*/0/ and re-decompose to embed new gust BC in binary U fields
-    print("  Re-decomposing 0/ to propagate new gust BC to processor dirs...")
-    for proc in sorted(CASE_DIR.glob("processor*")):
-        zero_dir = proc / "0"
-        if zero_dir.exists():
-            shutil.rmtree(zero_dir)
-    run_decompose(dt)
-    print("  Gust BC propagated via decomposePar")
+    # Propagate new gust BC to processor dirs via decomposePar -fields -time 0.
+    # This only updates the field files (not mesh), embedding the new codedFixedValue
+    # BC into the binary processor*/0/U fields without touching other time dirs.
+    print("  Running decomposePar -fields -time 0 to propagate gust BC...")
+    cmd = APPTAINER_CMD + [
+        "/bin/bash", "-c",
+        f"source /opt/openfoam7/etc/bashrc && cd {str(CASE_DIR)} && "
+        f"decomposePar -fields -time 0"
+    ]
+    result = subprocess.run(cmd, cwd=CASE_DIR, capture_output=True, text=True)
+    if result.returncode != 0:
+        print(result.stdout[-1000:])
+        print(result.stderr[-500:])
+        raise RuntimeError("decomposePar -fields failed")
+    print("  Gust BC propagated to all processor dirs")
 
     return h, hd, a, ad
 
@@ -889,9 +889,10 @@ def main():
         import json as _json
         with open(CASE_DIR / "cosim_state_t0.json", "w") as _f:
             _json.dump({"h": h, "hd": hd, "a": a, "ad": ad}, _f, indent=2)
-        # decomposePar always needed — for cold start creates all processor dirs,
-        # for checkpoint re-creates processor*/0/ with updated BC (gust inlet)
-        run_decompose(dt)
+        if not args.from_checkpoint:
+            run_decompose(dt)
+        else:
+            print("  Skipping decomposePar — checkpoint processor dirs already in place")
     else:
         # Restore full state from JSON (includes t_end and dt)
         saved = load_state()
