@@ -124,7 +124,7 @@ def write_gust_inlet(inlet_file=None):
     Called once at fresh start, before decomposePar.
     """
     if inlet_file is None:
-        inlet_file = CASE_DIR / "0.orig" / "include" / "fixedInletU"
+        inlet_file = CASE_DIR / "0.orig" / "include" / "fixedInlet"
 
     T_g = GUST_T_END - GUST_T_START
 
@@ -719,13 +719,13 @@ def load_from_checkpoint(t_end, dt):
 
     # Propagate new fixedInletU (with gust BC) to all processor dirs
     # The checkpoint processor dirs have the old gust-free BC — must be updated.
-    inlet_src = CASE_DIR / "0.orig" / "include" / "fixedInletU"
+    inlet_src = CASE_DIR / "0.orig" / "include" / "fixedInlet"
     if inlet_src.exists():
         for proc in sorted(CASE_DIR.glob("processor*")):
             inc_dir = proc / "0" / "include"
             inc_dir.mkdir(exist_ok=True)
-            shutil.copy2(inlet_src, inc_dir / "fixedInletU")
-        print(f"  Propagated fixedInletU (gust BC) to all processor dirs")
+            shutil.copy2(inlet_src, inc_dir / "fixedInlet")
+        print(f"  Propagated fixedInlet (gust BC) to all processor dirs")
 
     return h, hd, a, ad
 
