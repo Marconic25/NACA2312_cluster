@@ -676,10 +676,15 @@ def load_from_checkpoint(t_end, dt):
         shutil.rmtree(proc)
 
     # Restore processor dirs from checkpoint (time dir is already named 0)
+    import re as _re2
     for chk_proc in sorted(CHECKPOINT_DIR.glob("processor*")):
         dst = CASE_DIR / chk_proc.name
         shutil.copytree(chk_proc, dst)
-    print(f"  Restored {len(list(CHECKPOINT_DIR.glob('processor*')))} processor dirs")
+        # Remove any stale time dirs except 0 (should not exist but safety check)
+        for d in dst.iterdir():
+            if d.is_dir() and _re2.match(r"^\d+\.?\d*$", d.name) and d.name != "0":
+                shutil.rmtree(d)
+    print(f"  Restored {len(list(CHECKPOINT_DIR.glob('processor*')))} processor dirs (only t=0)")
 
     # Patch matchTolerance in all restored processor boundary files
     import re as _re
