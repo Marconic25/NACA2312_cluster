@@ -717,6 +717,16 @@ def load_from_checkpoint(t_end, dt):
     # Update controlDict to start from t=0
     update_control_dict(0.0, dt, use_latest_time=False, write_interval=None)
 
+    # Propagate new fixedInletU (with gust BC) to all processor dirs
+    # The checkpoint processor dirs have the old gust-free BC — must be updated.
+    inlet_src = CASE_DIR / "0.orig" / "include" / "fixedInletU"
+    if inlet_src.exists():
+        for proc in sorted(CASE_DIR.glob("processor*")):
+            inc_dir = proc / "0" / "include"
+            inc_dir.mkdir(exist_ok=True)
+            shutil.copy2(inlet_src, inc_dir / "fixedInletU")
+        print(f"  Propagated fixedInletU (gust BC) to all processor dirs")
+
     return h, hd, a, ad
 
 
