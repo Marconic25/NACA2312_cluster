@@ -647,17 +647,12 @@ def save_checkpoint(t_chk, h, hd, a, ad, dt):
                 except ValueError:
                     pass
         latest_t, latest_d = max(time_dirs)
-        # Copy: constant/ + latest time dir (renamed to 0)
+        # Copy: constant/ + latest time dir (keep original time name so
+        # latestTime in OF finds it correctly — do NOT rename to 0)
         shutil.copytree(proc / "constant", dst / "constant")
-        shutil.copytree(latest_d, dst / "0")  # rename to 0 for clean restart
-        # Also copy include/ from processor*/0/ (contains fixedInletU BC)
-        src_inc = proc / "0" / "include"
-        if src_inc.exists():
-            dst_inc = dst / "0" / "include"
-            if dst_inc.exists():
-                shutil.rmtree(dst_inc)
-            shutil.copytree(src_inc, dst_inc)
-        print(f"    Copied {proc.name}/  (t={latest_t:.4f} → 0)")
+        t_dir_name = f"{latest_t:.6g}"
+        shutil.copytree(latest_d, dst / t_dir_name)
+        print(f"    Copied {proc.name}/  (t={latest_t:.4f} kept as {t_dir_name})")
 
     # Save structural state at checkpoint (t reset to 0)
     chk_state = {"t_cur": 0.0, "h": h, "hd": hd, "a": a, "ad": ad,
@@ -688,16 +683,12 @@ def load_from_checkpoint(t_end, dt):
     for proc in sorted(CASE_DIR.glob("processor*")):
         shutil.rmtree(proc)
 
-    # Restore processor dirs from checkpoint (time dir is already named 0)
-    import re as _re2
+    # Restore processor dirs from checkpoint (time dir keeps original name e.g. 2.99978)
+    # so that OF latestTime finds the checkpoint fields, not RANS initial fields.
     for chk_proc in sorted(CHECKPOINT_DIR.glob("processor*")):
         dst = CASE_DIR / chk_proc.name
         shutil.copytree(chk_proc, dst)
-        # Remove any stale time dirs except 0 (should not exist but safety check)
-        for d in dst.iterdir():
-            if d.is_dir() and _re2.match(r"^\d+\.?\d*$", d.name) and d.name != "0":
-                shutil.rmtree(d)
-    print(f"  Restored {len(list(CHECKPOINT_DIR.glob('processor*')))} processor dirs (only t=0)")
+    print(f"  Restored {len(list(CHECKPOINT_DIR.glob('processor*')))} processor dirs")
 
     # Patch matchTolerance in all restored processor boundary files
     import re as _re
@@ -721,30 +712,18 @@ def load_from_checkpoint(t_end, dt):
     shutil.copy2(CHECKPOINT_DIR / "cosim_state_t0.json",
                  CASE_DIR / "cosim_state_t0.json")
 
-    # Update controlDict to start from t=0
-    update_control_dict(0.0, dt, use_latest_time=False, write_interval=None)
+    # Update controlDict: startFrom latestTime so OF picks up checkpoint fields
+    update_control_dict(t_orig, dt, use_latest_time=True, write_interval=None)
 
     # The checkpoint processor dirs have the BC from the baseline run (no gust).
     # OF reads U BC from the binary field in processor*/0/U — copying fixedInlet
     # text file is not enough. We need to re-decompose the 0/ directory so that
     # the new codedFixedValue BC is properly embedded in the processor U fields.
-    # Strategy: keep checkpoint time dirs (for CFD state), but re-decompose 0/
-    # by temporarily removing processor*/0/ and running decomposePar.
-    # Propagate new gust BC to processor dirs via decomposePar -fields -time 0.
-    # This only updates the field files (not mesh), embedding the new codedFixedValue
-    # BC into the binary processor*/0/U fields without touching other time dirs.
-    print("  Running decomposePar -fields -time 0 to propagate gust BC...")
-    cmd = APPTAINER_CMD + [
-        "/bin/bash", "-c",
-        f"source /opt/openfoam7/etc/bashrc && cd {str(CASE_DIR)} && "
-        f"decomposePar -fields -time 0"
-    ]
-    result = subprocess.run(cmd, cwd=CASE_DIR, capture_output=True, text=True)
-    if result.returncode != 0:
-        print(result.stdout[-1000:])
-        print(result.stderr[-500:])
-        raise RuntimeError("decomposePar -fields failed")
-    print("  Gust BC propagated to all processor dirs")
+    # The BC (codedFixedValue with W0=0) is already embedded in the checkpoint
+    # binary U fields. The new gust BC (W0=60) is written to fixedInletU by
+    # write_gust_inlet() — OF recompiles codedFixedValue at runtime from this file.
+    # No decomposePar needed — just write the new fixedInletU to 0.orig/include/.
+    print("  Gust BC will be recompiled at runtime from fixedInletU")
 
     return h, hd, a, ad
 
