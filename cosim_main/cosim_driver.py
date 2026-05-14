@@ -857,6 +857,7 @@ def main():
     h, hd, a, ad = 0.0, 0.0, 0.0, 0.0
     t_cur = 0.0
     window_idx = 0
+    t_offset = 0.0  # CFD time offset for CSV (subtracted to get run-relative time)
 
     if not args.restart:
         saved = load_state()
@@ -868,9 +869,26 @@ def main():
         if args.from_checkpoint:
             # Warm start from checkpoint/ — no mapFields, no transient
             print("\n--- Warm start from checkpoint ---")
-            write_gust_inlet()          # write (possibly new) gust BC
+            # Read checkpoint time to offset gust timing into CFD time coordinates
+            chk_state_file = CHECKPOINT_DIR / "cosim_state.json"
+            t_checkpoint_orig = 0.0
+            if chk_state_file.exists():
+                with open(chk_state_file) as _f:
+                    _s = json.load(_f)
+                t_checkpoint_orig = _s.get("t_checkpoint_orig", 0.0)
+            # Shift gust times: gust at t_run=0.1s → t_CFD = t_checkpoint_orig + 0.1s
+            global GUST_T_START, GUST_T_END
+            GUST_T_START = t_checkpoint_orig + GUST_T_START
+            GUST_T_END   = t_checkpoint_orig + GUST_T_END
+            t_end_cfd    = t_checkpoint_orig + t_end
+            print(f"  Checkpoint at t_orig={t_checkpoint_orig:.3f}s")
+            print(f"  Gust window in CFD time: [{GUST_T_START:.3f}, {GUST_T_END:.3f}]s")
+            write_gust_inlet()          # write gust BC with shifted times
             reset_case()                # clean processor*, postProcessing (keeps checkpoint/)
-            h, hd, a, ad = load_from_checkpoint(t_end, dt)
+            h, hd, a, ad = load_from_checkpoint(t_end_cfd, dt)
+            t_end = t_end_cfd           # loop uses CFD absolute time
+            t_cur = t_checkpoint_orig   # start from checkpoint time
+            t_offset = t_checkpoint_orig  # subtract from t_win to get run-relative time in CSV
             run_toposet()               # rebuild wingZone/flapZone on restored mesh
         else:
             # Cold fresh start from RANS
@@ -883,7 +901,7 @@ def main():
             hd, ad = 0.0, 0.0
         # Seed motion tables at equilibrium position for the full simulation duration
         window_dt = args.window * dt
-        t_seed = np.array([0.0, t_end + window_dt])
+        t_seed = np.array([t_cur, t_end + window_dt])
         h_seed = np.array([h, h])
         a_seed_deg = np.degrees(np.array([a, a]))
         write_tabulated6dof(CONST_DIR / "wingMotion.dat",
@@ -991,13 +1009,14 @@ def main():
         print(f"  Flap δ: {delta_schedule(t_cur):.2f}° → {delta_schedule(t_win_end):.2f}°")
 
         # Update controlDict for this window.
-        # Window 0: startFrom startTime (t=0, processor*/0/ exists from decomposePar).
-        # Window 1+: startFrom latestTime so OF picks up the last written time dir.
-        # writeInterval = window size so OF writes exactly one snapshot per window,
-        # guaranteeing processor*/t_win_end/ exists for the next window to restart from.
+        # Window 0: startFrom startTime normally (processor*/0/ from decomposePar).
+        # Exception: --from-checkpoint uses latestTime for window 0 so pimpleFoam
+        # reads the checkpoint CFD fields (t≈3s) not the RANS initial fields (t=0).
+        # Window 1+: always latestTime.
         n_steps = len(t_win) - 1
+        use_latest = (window_idx > 0) or args.from_checkpoint
         update_control_dict(t_cur, t_win_end,
-                            use_latest_time=(window_idx > 0),
+                            use_latest_time=use_latest,
                             write_interval=n_steps)
 
         # Run pimpleFoam
@@ -1055,11 +1074,11 @@ def main():
         # Decimate by 4: with writeInterval=5 and dt=7e-5 → sample every 4 points = 1.4e-3s
         skip = 10 if window_idx == 0 else 2
         for i in range(skip, len(t_win)):
-            if t_win[i] < T_CSV_SKIP:
+            if t_win[i] - t_offset < T_CSV_SKIP:
                 continue
             if (i - skip) % 4 != 0:
                 continue
-            traj_buf.append((t_win[i], h_traj[i], hd_traj[i],
+            traj_buf.append((t_win[i] - t_offset, h_traj[i], hd_traj[i],
                              a_traj[i], ad_traj[i], Fy_win[i], Mz_win[i]))
 
         t_cur = t_win_end
