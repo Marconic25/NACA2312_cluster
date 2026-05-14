@@ -1092,8 +1092,15 @@ def main():
     print(f"  Structural trajectory saved → {traj_path}")
 
     print("\n>>> Generating response plots...")
+    t_end_rel = t_end - t_offset  # relative end time for plot (CSV uses relative time)
+    # Pass gust times relative to run start for correct shading in plot
+    gust_start_rel = GUST_T_START - t_offset
+    gust_end_rel   = GUST_T_END   - t_offset
     subprocess.run(
-        [sys.executable, str(CASE_DIR / "plot_response.py"), "--t-end", str(t_end)],
+        [sys.executable, str(CASE_DIR / "plot_response.py"),
+         "--t-end",        str(t_end_rel),
+         "--gust-t-start", str(gust_start_rel),
+         "--gust-t-end",   str(gust_end_rel)],
         cwd=CASE_DIR,
     )
 

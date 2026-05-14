@@ -259,11 +259,21 @@ def plot(t_f, Fy_f, Mz_f, t_s, h_s, a_s, hd_s, ad_s, t_end, t_start=0.0):
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--t-end",   type=float, default=2.0,
-                        help="Time horizon for plot [s] (default: 2.0)")
-    parser.add_argument("--t-start", type=float, default=0.0,
-                        help="Start time for plot [s] (default: 0.0)")
+    parser.add_argument("--t-end",        type=float, default=2.0)
+    parser.add_argument("--t-start",      type=float, default=0.0)
+    parser.add_argument("--gust-t-start", type=float, default=None,
+                        help="Override gust start time for plot annotations [s]")
+    parser.add_argument("--gust-t-end",   type=float, default=None,
+                        help="Override gust end time for plot annotations [s]")
     args = parser.parse_args()
+
+    # Override gust timing for annotations if provided (relative to run start)
+    global GUST_T_START, GUST_T_END, T_GUST_ARRIVE, T_FLAP_START, T_FLAP_END
+    if args.gust_t_start is not None:
+        GUST_T_START  = args.gust_t_start
+        T_GUST_ARRIVE = GUST_T_START + 10.0 / U_INF
+    if args.gust_t_end is not None:
+        GUST_T_END = args.gust_t_end
 
     t_f, Fy_f, Mz_f, t_s, h_s, a_s, hd_s, ad_s = reconstruct_structural(args.t_end)
     plot(t_f, Fy_f, Mz_f, t_s, h_s, a_s, hd_s, ad_s, args.t_end, t_start=args.t_start)
