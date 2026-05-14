@@ -717,23 +717,14 @@ def load_from_checkpoint(t_end, dt):
 
     # The checkpoint processor dirs have the BC from the baseline run (no gust).
     # OF reads U BC from the binary field in processor*/0/U — copying fixedInlet
-    # text file is not enough. We need to re-decompose the 0/ directory so that
-    # the new codedFixedValue BC is properly embedded in the processor U fields.
-    # Update the binary U fields in processor dirs with new gust BC (W0=60).
-    # decomposePar -fields -time t_orig reads 0/U (with new fixedInletU W0=60)
-    # and updates processor*/t_orig/U without touching mesh or other time dirs.
-    print(f"  Running decomposePar -fields -time {t_orig:.5g} to embed new gust BC...")
-    cmd = APPTAINER_CMD + [
-        "/bin/bash", "-c",
-        f"source /opt/openfoam7/etc/bashrc && cd {str(CASE_DIR)} && "
-        f"decomposePar -fields -time {t_orig:.5g}"
-    ]
-    result = subprocess.run(cmd, cwd=CASE_DIR, capture_output=True, text=True)
-    if result.returncode != 0:
-        print(result.stdout[-1000:])
-        print(result.stderr[-500:])
-        raise RuntimeError("decomposePar -fields failed")
-    print("  Gust BC embedded in checkpoint processor dirs")
+    # The binary U fields contain the old codedFixedValue (W0=0) from baseline.
+    # By removing dynamicCode/ cache, OF is forced to recompile the codedFixedValue
+    # from fixedInletU (which now has W0=60) at the first timestep.
+    # This is the correct way to change the BC without re-running decomposePar.
+    dyn_code = CASE_DIR / "dynamicCode"
+    if dyn_code.exists():
+        shutil.rmtree(dyn_code)
+    print("  Removed dynamicCode/ — OF will recompile gust BC from fixedInletU at first timestep")
 
     return h, hd, a, ad
 
