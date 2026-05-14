@@ -719,11 +719,21 @@ def load_from_checkpoint(t_end, dt):
     # OF reads U BC from the binary field in processor*/0/U — copying fixedInlet
     # text file is not enough. We need to re-decompose the 0/ directory so that
     # the new codedFixedValue BC is properly embedded in the processor U fields.
-    # The BC (codedFixedValue with W0=0) is already embedded in the checkpoint
-    # binary U fields. The new gust BC (W0=60) is written to fixedInletU by
-    # write_gust_inlet() — OF recompiles codedFixedValue at runtime from this file.
-    # No decomposePar needed — just write the new fixedInletU to 0.orig/include/.
-    print("  Gust BC will be recompiled at runtime from fixedInletU")
+    # Update the binary U fields in processor dirs with new gust BC (W0=60).
+    # decomposePar -fields -time t_orig reads 0/U (with new fixedInletU W0=60)
+    # and updates processor*/t_orig/U without touching mesh or other time dirs.
+    print(f"  Running decomposePar -fields -time {t_orig:.5g} to embed new gust BC...")
+    cmd = APPTAINER_CMD + [
+        "/bin/bash", "-c",
+        f"source /opt/openfoam7/etc/bashrc && cd {str(CASE_DIR)} && "
+        f"decomposePar -fields -time {t_orig:.5g}"
+    ]
+    result = subprocess.run(cmd, cwd=CASE_DIR, capture_output=True, text=True)
+    if result.returncode != 0:
+        print(result.stdout[-1000:])
+        print(result.stderr[-500:])
+        raise RuntimeError("decomposePar -fields failed")
+    print("  Gust BC embedded in checkpoint processor dirs")
 
     return h, hd, a, ad
 
