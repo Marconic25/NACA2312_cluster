@@ -877,7 +877,6 @@ def main():
                     _s = json.load(_f)
                 t_checkpoint_orig = _s.get("t_checkpoint_orig", 0.0)
             # Shift gust times: gust at t_run=0.1s → t_CFD = t_checkpoint_orig + 0.1s
-            global GUST_T_START, GUST_T_END
             GUST_T_START = t_checkpoint_orig + GUST_T_START
             GUST_T_END   = t_checkpoint_orig + GUST_T_END
             t_end_cfd    = t_checkpoint_orig + t_end
