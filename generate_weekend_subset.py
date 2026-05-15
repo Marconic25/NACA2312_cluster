@@ -251,8 +251,8 @@ def main():
     if args.dry_run:
         print(f"\n  [DRY RUN — nessuna directory verrà creata]\n")
 
-    print(f"\n{'Sim':<30} {'Fam':<5} {'Law':>3} {'Split':<6} {'W_g0':>6} {'T_g':>5} {'Stato'}")
-    print(f"{'-'*70}")
+    print(f"\n{'Sim':<30} {'Fam':<5} {'Law':>3} {'Split':<6} {'W_g0':>6} {'T_g':>5} {'δ_max':>6} {'dt_ramp':>7} {'Stato'}")
+    print(f"{'-'*82}")
 
     pbs_files = []
     n_created = 0; n_done = 0; n_exists = 0
@@ -262,10 +262,15 @@ def main():
 
     for row in rows:
         sim_dir, status = setup_one_sim(row, output_dir, args.dry_run)
-        W_g0 = float(row["W_g0"])
-        T_g  = float(row["T_g"])
+        W_g0     = float(row["W_g0"])
+        T_g      = float(row["T_g"])
+        try:    delta_max = float(row["delta_max"])
+        except: delta_max = 0.0
+        try:    dt_ramp = float(row["dt_ramp"]) if row.get("dt_ramp") not in ("", "nan", None) else float("nan")
+        except: dt_ramp = float("nan")
+        dt_str = f"{dt_ramp:>7.3f}" if dt_ramp == dt_ramp else "    ---"
         print(f"{row['sim_name']:<30} {row['family']:<5} {row['law']:>3} "
-              f"{row['split']:<6} {W_g0:>6.1f} {T_g:>5.2f}  {status}")
+              f"{row['split']:<6} {W_g0:>6.1f} {T_g:>5.2f} {delta_max:>6.1f} {dt_str}  {status}")
         if status == "created":
             n_created += 1
             pbs_files.append(sim_dir / "job.pbs")
