@@ -1,12 +1,22 @@
 #!/usr/bin/env python3
 """
-generate_dataset_params.py — LHS sampling for GLA dataset v2.
+generate_dataset_params.py — LHS sampling for GLA dataset v3 (redesigned).
 
-Generates metadata.csv with parameters for all 64 simulations across 5 families.
-Uses Latin Hypercube Sampling with constraint rejection.
+Famiglia | Descrizione                        | W_g | delta | Law
+---------|------------------------------------|----|-------|----
+A        | Gust puro, no flap                 | LHS | 0     | 0
+B1       | Flap puro, no gust, law 1          | 0   | LHS   | 1
+C1       | Gust + flap combinati, law 1       | LHS | LHS   | 1
+
+Famiglie A e B1 isolano gli effetti; C1 cattura l'interazione.
+delta_max ∈ [-20, -2] ∪ [2, 20] deg (unifico positivo e negativo in B1/C1).
+Le dimensioni delle famiglie vengono scelte dopo la PCA — questo script
+accetta --n-train/--n-test per famiglia come argomenti.
 
 Usage:
-    python generate_dataset_params.py [--seed 42] [--output metadata.csv]
+    python generate_dataset_params.py --dry-run
+    python generate_dataset_params.py --output metadata.csv
+    python generate_dataset_params.py --n-A-train 12 --n-B1-train 25 --n-C1-train 25
 """
 
 import argparse
@@ -14,232 +24,277 @@ import numpy as np
 import csv
 from pathlib import Path
 
-# ---------------------------------------------------------------------------
-# Try scipy LHS; fall back to simple stratified sampling if unavailable
-# ---------------------------------------------------------------------------
 try:
     from scipy.stats import qmc
     HAS_SCIPY = True
 except ImportError:
     HAS_SCIPY = False
-    print("[WARNING] scipy not found — using simple stratified sampling instead of LHS")
+    print("[WARNING] scipy not found — using stratified sampling")
 
+# ─────────────────────── Parametri fissi ─────────────────────────────────────
 
-def lhs_sample(n_samples, n_dims, l_bounds, u_bounds, seed=42, max_attempts=50):
-    """Generate LHS samples within bounds, returns (n_samples, n_dims) array."""
+U_INF        = 80.0   # m/s
+T_SIM        = 3.0    # s
+T_CONSTRAINT = 2.5    # flap deve finire prima di questo istante [s]
+
+# ─────────────────────── LHS + rejection ─────────────────────────────────────
+
+def lhs_sample(n, d, l_bounds, u_bounds, seed):
     if HAS_SCIPY:
-        sampler = qmc.LatinHypercube(d=n_dims, seed=seed)
-        raw = sampler.random(n=n_samples * max_attempts)  # oversample for rejection
-        scaled = qmc.scale(raw, l_bounds, u_bounds)
+        sampler = qmc.LatinHypercube(d=d, seed=seed)
+        raw = sampler.random(n=n)
+        return qmc.scale(raw, l_bounds, u_bounds)
     else:
         rng = np.random.default_rng(seed)
-        raw = np.zeros((n_samples * max_attempts, n_dims))
-        for j in range(n_dims):
-            perm = np.tile(np.arange(n_samples * max_attempts), 1)
-            rng.shuffle(perm)
-            raw[:, j] = (perm + rng.random(n_samples * max_attempts)) / (n_samples * max_attempts)
-        scaled = raw * (np.array(u_bounds) - np.array(l_bounds)) + np.array(l_bounds)
-    return scaled
+        raw = np.zeros((n, d))
+        for j in range(d):
+            perm = rng.permutation(n)
+            raw[:, j] = (perm + rng.random(n)) / n
+        return raw * (np.array(u_bounds) - np.array(l_bounds)) + np.array(l_bounds)
 
 
-def sample_with_constraints(n_samples, n_dims, l_bounds, u_bounds,
-                            constraint_fn=None, seed=42):
-    """Sample n_samples valid points using LHS + rejection."""
-    candidates = lhs_sample(n_samples * 20, n_dims, l_bounds, u_bounds, seed=seed)
-
+def sample_with_constraints(n_total, d, l_bounds, u_bounds, constraint_fn, seed,
+                            oversample=20):
+    candidates = lhs_sample(n_total * oversample, d, l_bounds, u_bounds, seed)
     if constraint_fn is not None:
         mask = np.array([constraint_fn(row) for row in candidates])
         candidates = candidates[mask]
-
-    if len(candidates) < n_samples:
+    if len(candidates) < n_total:
         raise RuntimeError(
-            f"Only {len(candidates)} valid samples from {n_samples*20} candidates. "
-            f"Relax constraints or increase oversampling."
+            f"Solo {len(candidates)} campioni validi su {n_total*oversample}. "
+            f"Rilassa i vincoli o aumenta l'oversampling."
         )
-
-    # Take first n_samples (LHS property is approximate after rejection,
-    # but coverage is still good with large oversampling)
-    return candidates[:n_samples]
+    return candidates[:n_total]
 
 
-# ---------------------------------------------------------------------------
-# Family definitions
-# ---------------------------------------------------------------------------
+# ─────────────────────── Campionamento delta_max con gap ─────────────────────
 
-T_SIM = 3.0
-T_CONSTRAINT = T_SIM - 0.5  # 2.5 s — flap must finish before this
+def sample_delta_max(n, seed):
+    """
+    Campiona delta_max su [-20,-2] ∪ [2,20] evitando la banda morta attorno a 0.
+    Strategia: campiona u ∈ [0,1] con LHS, mappa su [-20,-2] (prima metà) o
+    [2,20] (seconda metà) a seconda del segno.
+    """
+    rng = np.random.default_rng(seed + 77)
+    # LHS 1D su [0, 1]
+    if HAS_SCIPY:
+        sampler = qmc.LatinHypercube(d=1, seed=seed + 77)
+        u = sampler.random(n=n).ravel()
+    else:
+        perm = rng.permutation(n)
+        u = (perm + rng.random(n)) / n
 
-FAMILIES = {
-    "A": {
-        "description": "No flap (baseline)",
-        "law": 0,
-        "n_train": 6,
-        "n_test": 2,
-        "params": ["R", "T_g"],
-        "l_bounds": [0.10, 0.30],
-        "u_bounds": [0.60, 1.20],
-        "constraint": None,
-    },
-    "B1": {
-        "description": "Informed, Law 1 (ramp + hold)",
-        "law": 1,
-        "n_train": 16,
-        "n_test": 4,
-        "params": ["R", "T_g", "delta_max", "dt_ramp", "t_start_delta"],
-        "l_bounds": [0.10, 0.30, 2.0, 0.05, 0.20],
-        "u_bounds": [0.60, 1.20, 20.0, 0.50, 0.80],
-        "constraint": lambda x: x[4] + x[3] < T_CONSTRAINT,  # t_start + dt_ramp < 2.5
-    },
-    "B2": {
-        "description": "Informed, Law 2 (two-phase ramp)",
-        "law": 2,
-        "n_train": 12,
-        "n_test": 3,
-        "params": ["R", "T_g", "delta_max", "dt_1", "dt_2", "t_start_delta"],
-        "l_bounds": [0.10, 0.30, 2.0, 0.05, 0.10, 0.20],
-        "u_bounds": [0.60, 1.20, 20.0, 0.20, 0.40, 0.80],
-        "constraint": lambda x: x[5] + x[3] + x[4] < T_CONSTRAINT,  # t_start + dt1 + dt2
-    },
-    "B3": {
-        "description": "Informed, Law 3 (trapezoid)",
-        "law": 3,
-        "n_train": 10,
-        "n_test": 3,
-        "params": ["R", "T_g", "delta_max", "dt_up", "dt_hold", "dt_down", "t_start_delta"],
-        "l_bounds": [0.10, 0.30, 2.0, 0.05, 0.10, 0.05, 0.20],
-        "u_bounds": [0.60, 1.20, 20.0, 0.50, 0.50, 0.50, 0.80],
-        "constraint": lambda x: x[6] + x[3] + x[4] + x[5] < T_CONSTRAINT,
-    },
-    "C": {
-        "description": "Uninformed, Law 1 (ramp + hold)",
-        "law": 1,
-        "n_train": 6,
-        "n_test": 2,
-        "params": ["R", "T_g", "delta_max", "dt_ramp", "t_start_delta"],
-        "l_bounds": [0.10, 0.30, 2.0, 0.05, 0.00],
-        "u_bounds": [0.60, 1.20, 20.0, 0.50, 0.15],
-        "constraint": lambda x: x[4] + x[3] < T_CONSTRAINT,
-    },
-}
-
-# All possible column names (superset across families)
-ALL_PARAM_COLS = [
-    "R", "T_g", "delta_max",
-    "dt_ramp",                   # Law 1 (B1, C)
-    "dt_1", "dt_2",              # Law 2 (B2)
-    "dt_up", "dt_hold", "dt_down",  # Law 3 (B3)
-    "t_start_delta",
-]
+    delta = np.where(u < 0.5,
+                     -20.0 + (u / 0.5) * 18.0,        # [-20, -2]
+                      2.0  + ((u - 0.5) / 0.5) * 18.0) # [2, 20]
+    return delta
 
 
-def generate_family(family_name, fam_def, seed_base=42):
-    """Generate train + test samples for one family."""
-    n_total = fam_def["n_train"] + fam_def["n_test"]
-    params = fam_def["params"]
+# ─────────────────────── Generatori per famiglia ─────────────────────────────
 
+def generate_A(n_train, n_test, seed):
+    """
+    Famiglia A — gust puro, no flap.
+    Parametri LHS: R ∈ [0.10, 0.60], T_g ∈ [0.30, 1.20]
+    W_g0 = R * U_inf; delta = 0.
+    """
+    n_total = n_train + n_test
     samples = sample_with_constraints(
-        n_total,
-        len(params),
-        fam_def["l_bounds"],
-        fam_def["u_bounds"],
-        constraint_fn=fam_def["constraint"],
-        seed=seed_base + hash(family_name) % 1000,
+        n_total, 2,
+        l_bounds=[0.10, 0.30],
+        u_bounds=[0.60, 1.20],
+        constraint_fn=None,
+        seed=seed,
     )
-
     rows = []
-    for i, sample in enumerate(samples):
-        split = "train" if i < fam_def["n_train"] else "test"
-        idx_in_family = i
-
-        sim_name = f"sim_{family_name}_{idx_in_family:03d}_{split}"
-
-        row = {
-            "sim_name": sim_name,
-            "family": family_name,
-            "law": fam_def["law"],
-            "split": split,
-            "index": idx_in_family,
-        }
-
-        # Fill family-specific params
-        for j, p in enumerate(params):
-            row[p] = round(float(sample[j]), 6)
-
-        # Derived quantities
-        row["W_g0"] = round(row["R"] * 80.0, 4)  # U_inf = 80
-
-        # Fill missing params with 0 or NaN
-        for col in ALL_PARAM_COLS:
-            if col not in row:
-                row[col] = 0.0 if fam_def["law"] == 0 else np.nan
-
-        # For family A: ensure all flap params are 0
-        if family_name == "A":
-            for col in ALL_PARAM_COLS:
-                if col not in ["R", "T_g"]:
-                    row[col] = 0.0
-
-        rows.append(row)
-
+    for i, s in enumerate(samples):
+        R, T_g = s
+        rows.append({
+            "family":        "A",
+            "law":           0,
+            "split":         "train" if i < n_train else "test",
+            "index":         i,
+            "R":             round(R, 6),
+            "T_g":           round(T_g, 6),
+            "W_g0":          round(R * U_INF, 4),
+            "delta_max":     0.0,
+            "t_start_delta": 0.0,
+            "dt_ramp":       0.0,
+        })
     return rows
 
 
-def main():
-    parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--seed", type=int, default=42)
-    parser.add_argument("--output", type=str, default="metadata.csv")
-    args = parser.parse_args()
+def generate_B1(n_train, n_test, seed):
+    """
+    Famiglia B1 — flap puro, no gust, law 1 (ramp + hold).
+    W_g = 0 (R = 0).
+    Parametri LHS: delta_max ∈ [-20,-2]∪[2,20], dt_ramp ∈ [0.05,0.50],
+                   t_start_delta ∈ [0.10, 0.80].
+    Vincolo: t_start + dt_ramp < T_CONSTRAINT.
+    """
+    n_total = n_train + n_test
 
+    # Campiona t_start e dt_ramp con LHS 2D + vincolo
+    timing = sample_with_constraints(
+        n_total, 2,
+        l_bounds=[0.10, 0.05],
+        u_bounds=[0.80, 0.50],
+        constraint_fn=lambda x: x[0] + x[1] < T_CONSTRAINT,  # t_start + dt_ramp
+        seed=seed,
+    )
+    delta_vals = sample_delta_max(n_total, seed)
+
+    rows = []
+    for i in range(n_total):
+        t_start, dt_ramp = timing[i]
+        delta_max = delta_vals[i]
+        rows.append({
+            "family":        "B1",
+            "law":           1,
+            "split":         "train" if i < n_train else "test",
+            "index":         i,
+            "R":             0.0,
+            "T_g":           0.0,
+            "W_g0":          0.0,
+            "delta_max":     round(float(delta_max), 6),
+            "t_start_delta": round(float(t_start), 6),
+            "dt_ramp":       round(float(dt_ramp), 6),
+        })
+    return rows
+
+
+def generate_C1(n_train, n_test, seed):
+    """
+    Famiglia C1 — gust + flap combinati, law 1.
+    Parametri LHS: R ∈ [0.10,0.60], T_g ∈ [0.30,1.20],
+                   delta_max ∈ [-20,-2]∪[2,20],
+                   dt_ramp ∈ [0.05,0.50], t_start_delta ∈ [0.10,0.80].
+    Vincolo: t_start + dt_ramp < T_CONSTRAINT.
+    """
+    n_total = n_train + n_test
+
+    # LHS 4D per i parametri continui (escluso delta_max che ha gap)
+    samples = sample_with_constraints(
+        n_total, 4,
+        l_bounds=[0.10, 0.30, 0.10, 0.05],
+        u_bounds=[0.60, 1.20, 0.80, 0.50],
+        constraint_fn=lambda x: x[2] + x[3] < T_CONSTRAINT,  # t_start + dt_ramp
+        seed=seed,
+    )
+    delta_vals = sample_delta_max(n_total, seed)
+
+    rows = []
+    for i in range(n_total):
+        R, T_g, t_start, dt_ramp = samples[i]
+        delta_max = delta_vals[i]
+        rows.append({
+            "family":        "C1",
+            "law":           1,
+            "split":         "train" if i < n_train else "test",
+            "index":         i,
+            "R":             round(float(R), 6),
+            "T_g":           round(float(T_g), 6),
+            "W_g0":          round(float(R * U_INF), 4),
+            "delta_max":     round(float(delta_max), 6),
+            "t_start_delta": round(float(t_start), 6),
+            "dt_ramp":       round(float(dt_ramp), 6),
+        })
+    return rows
+
+
+# ─────────────────────── Assemblaggio metadata ───────────────────────────────
+
+FIELDNAMES = [
+    "global_index", "sim_name", "family", "law", "split", "index",
+    "R", "T_g", "W_g0",
+    "delta_max", "t_start_delta", "dt_ramp",
+]
+
+GENERATORS = {
+    "A":  generate_A,
+    "B1": generate_B1,
+    "C1": generate_C1,
+}
+
+
+def build_metadata(counts, seed=42):
+    """
+    counts: dict {family: (n_train, n_test)}
+    Returns list of row dicts with global_index and sim_name.
+    """
     all_rows = []
     global_idx = 0
-
-    print(f"Generating dataset parameters (seed={args.seed})...")
-    print(f"{'Family':<8} {'Train':>5} {'Test':>5} {'Total':>5} {'LHS dim':>7}")
-    print("-" * 40)
-
-    for fam_name, fam_def in FAMILIES.items():
-        rows = generate_family(fam_name, fam_def, seed_base=args.seed)
-
-        # Add global index
+    for fam, (n_tr, n_te) in counts.items():
+        fam_seed = seed + hash(fam) % 10000
+        rows = GENERATORS[fam](n_tr, n_te, fam_seed)
         for row in rows:
             row["global_index"] = global_idx
+            row["sim_name"] = f"sim_{fam}_{row['index']:03d}_{row['split']}"
             global_idx += 1
-
         all_rows.extend(rows)
-        n_tr = sum(1 for r in rows if r["split"] == "train")
-        n_te = sum(1 for r in rows if r["split"] == "test")
-        print(f"{fam_name:<8} {n_tr:>5} {n_te:>5} {len(rows):>5} {len(fam_def['params']):>7}")
+    return all_rows
 
-    print("-" * 40)
-    n_train = sum(1 for r in all_rows if r["split"] == "train")
-    n_test = sum(1 for r in all_rows if r["split"] == "test")
-    print(f"{'TOTAL':<8} {n_train:>5} {n_test:>5} {len(all_rows):>5}")
 
-    # Write CSV
-    fieldnames = [
-        "global_index", "sim_name", "family", "law", "split", "index",
-        "R", "T_g", "W_g0",
-        "delta_max", "t_start_delta",
-        "dt_ramp", "dt_1", "dt_2", "dt_up", "dt_hold", "dt_down",
-    ]
+# ─────────────────────── Main ─────────────────────────────────────────────────
+
+def main():
+    parser = argparse.ArgumentParser(description=__doc__,
+                                     formatter_class=argparse.RawDescriptionHelpFormatter)
+    parser.add_argument("--seed",        type=int, default=42)
+    parser.add_argument("--output",      type=str, default="metadata.csv")
+    parser.add_argument("--dry-run",     action="store_true",
+                        help="Stampa il sommario senza scrivere il CSV")
+    # Dimensioni per famiglia (da decidere dopo PCA)
+    parser.add_argument("--n-A-train",   type=int, default=10)
+    parser.add_argument("--n-A-test",    type=int, default=3)
+    parser.add_argument("--n-B1-train",  type=int, default=20)
+    parser.add_argument("--n-B1-test",   type=int, default=5)
+    parser.add_argument("--n-C1-train",  type=int, default=20)
+    parser.add_argument("--n-C1-test",   type=int, default=5)
+    args = parser.parse_args()
+
+    counts = {
+        "A":  (args.n_A_train,  args.n_A_test),
+        "B1": (args.n_B1_train, args.n_B1_test),
+        "C1": (args.n_C1_train, args.n_C1_test),
+    }
+
+    all_rows = build_metadata(counts, seed=args.seed)
+
+    # Sommario
+    print(f"\nGLA Dataset — parametri")
+    print(f"{'Famiglia':<8} {'Descrizione':<35} {'Train':>6} {'Test':>5} {'Totale':>7}")
+    print("-" * 60)
+    descriptions = {
+        "A":  "Gust puro (W_g≠0, δ=0)",
+        "B1": "Flap puro (W_g=0, δ≠0, law 1)",
+        "C1": "Combinata (W_g≠0, δ≠0, law 1)",
+    }
+    for fam, (n_tr, n_te) in counts.items():
+        print(f"{fam:<8} {descriptions[fam]:<35} {n_tr:>6} {n_te:>5} {n_tr+n_te:>7}")
+    print("-" * 60)
+    n_tr_tot = sum(v[0] for v in counts.values())
+    n_te_tot = sum(v[1] for v in counts.values())
+    print(f"{'TOTALE':<44} {n_tr_tot:>6} {n_te_tot:>5} {n_tr_tot+n_te_tot:>7}")
+
+    # Anteprima campioni
+    print(f"\nAnteprima (prime 3 righe per famiglia):")
+    for fam in counts:
+        fam_rows = [r for r in all_rows if r["family"] == fam][:3]
+        for r in fam_rows:
+            print(f"  {r['sim_name']:<30}  R={r['R']:.3f}  T_g={r['T_g']:.3f}  "
+                  f"δ_max={r['delta_max']:+.1f}°  dt_ramp={r['dt_ramp']:.3f}s")
+
+    if args.dry_run:
+        print(f"\n[DRY RUN] Nessun file scritto. Rimuovi --dry-run per salvare.")
+        return
 
     out_path = Path(args.output)
     with open(out_path, "w", newline="") as f:
-        writer = csv.DictWriter(f, fieldnames=fieldnames, extrasaction="ignore")
+        writer = csv.DictWriter(f, fieldnames=FIELDNAMES, extrasaction="ignore")
         writer.writeheader()
         writer.writerows(all_rows)
-
-    print(f"\nSaved → {out_path} ({len(all_rows)} simulations)")
-
-    # Print a few samples for verification
-    print("\nSample entries:")
-    for row in all_rows[:3]:
-        print(f"  {row['sim_name']}: R={row['R']:.3f}, T_g={row['T_g']:.3f}, "
-              f"δ_max={row.get('delta_max', 0):.1f}°, law={row['law']}")
-    print("  ...")
-    for row in all_rows[-2:]:
-        print(f"  {row['sim_name']}: R={row['R']:.3f}, T_g={row['T_g']:.3f}, "
-              f"δ_max={row.get('delta_max', 0):.1f}°, law={row['law']}")
+    print(f"\nSalvato → {out_path} ({len(all_rows)} simulazioni)")
 
 
 if __name__ == "__main__":

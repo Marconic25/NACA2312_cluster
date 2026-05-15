@@ -1,15 +1,14 @@
 #!/usr/bin/env python3
 """
-generate_weekend_subset.py — Genera il subset PCA del weekend (22 sim).
+generate_weekend_subset.py — Genera il subset PCA del weekend.
 
-Famiglie:
-  A    — 8 sim (tutte: 6 train + 2 test): solo gust, no flap
-  B1   — 8 sim (prime 8 train): flap positivo, law 1
-  B1n  — 6 sim (prime 6 train): flap negativo, law 1
+Famiglie (nuova logica isolata):
+  A   — gust puro (W_g ≠ 0, δ = 0):   6 train + 2 test = 8 sim
+  B1  — flap puro (W_g = 0, δ ≠ 0):   8 train + 2 test = 10 sim
+Totale: 18 sim × ~2h = ~36h
 
 Ogni sim parte da checkpoint_W0_baseline/ (warm-start, no mapFields).
-I dati vengono scritti su /scratch_local/$USER/<sim_name> e i risultati
-leggeri (structural_trajectory.csv, postProcessing/) copiati su /work.
+Dati scritti su /scratch_local/$USER/<sim_name>; risultati leggeri copiati su /work.
 
 Usage:
     python generate_weekend_subset.py --dry-run
@@ -19,30 +18,29 @@ Usage:
 
 import argparse
 import csv
+import shutil
 import subprocess
 import sys
 from pathlib import Path
 
-import setup_sims  # riusa build_flap_schedule, patch_cosim_driver
+import setup_sims
+import generate_dataset_params as gdp   # riusa generate_A, generate_B1
 
 # ─────────────────────── Configurazione cluster ──────────────────────────────
 
 WORK_BASE       = "/work/u10677113/NACA2312"
 CONTAINER_ABS   = "/work/u10677113/of7.sif"
-CHECKPOINT_NAME = "checkpoint_W0_baseline"   # nella cosim_main sul cluster
-T_SIM           = 3.0                        # durata relativa dal checkpoint [s]
-WALLTIME        = "03:30:00"                 # 2h sim + 1h30 setup/extract/copia
+CHECKPOINT_NAME = "checkpoint_W0_baseline"
+T_SIM           = 3.0       # durata relativa dal checkpoint [s]
+WALLTIME        = "03:30:00"
 N_PROCS         = 16
 WINDOW          = 286
 DT              = 7e-5
 
-# ─────────────────────── Filtro subset weekend ───────────────────────────────
-
-SUBSET = {
-    "A":   {"split": None,    "max_count": None},   # tutte le 8 sim
-    "B1":  {"split": "train", "max_count": 8},      # prime 8 train
-    "B1n": {"split": "train", "max_count": 6},      # prime 6 train
-}
+# Dimensioni subset weekend
+N_A_TRAIN  = 6;  N_A_TEST  = 2
+N_B1_TRAIN = 8;  N_B1_TEST = 2
+SEED       = 42
 
 # ─────────────────────── PBS template ────────────────────────────────────────
 
@@ -81,6 +79,9 @@ rsync -a --exclude='processor*' --exclude='postProcessing' --exclude='postProces
       --exclude='__pycache__' --exclude='checkpoint' --exclude='checkpoint_*' \\
       "$WORK_BASE/cosim_main/" "$SCRATCH/"
 
+# Sostituisci cosim_driver.py con quello patchato per questa sim
+cp "{work_sim_dir}/cosim_driver.py" "$SCRATCH/cosim_driver.py"
+
 # ── Copia checkpoint come 'checkpoint/' nella scratch ──
 echo "=== Copying checkpoint... ==="
 cp -r "$CHECKPOINT_SRC" "$SCRATCH/checkpoint"
@@ -92,8 +93,6 @@ source ~/cosim_env/bin/activate 2>/dev/null || \\
 source "$WORK_BASE/my_venv/bin/activate" 2>/dev/null || true
 
 # ── Co-simulazione con warm-start da checkpoint ──
-# --from-checkpoint: legge checkpoint/, no mapFields, no decomposePar
-# I tempi del gust sono relativi al run (cosim_driver li shifta in coordinate CFD)
 echo "=== Starting co-simulation (from checkpoint)... ==="
 python3 cosim_driver.py \\
     --np {n_procs} --window {window} --dt {dt} --t-end {t_end} \\
@@ -105,10 +104,10 @@ python3 cosim_driver.py \\
 
 echo "=== Co-simulation done ==="
 
-# ── Estrazione timeseries (no fields per ora) ──
+# ── Estrazione timeseries ──
 echo "=== Extracting timeseries... ==="
 python3 "$WORK_BASE/extract_data.py" \\
-    --metadata "$WORK_BASE/metadata_merged.csv" \\
+    --metadata "{work_sim_dir}/sim_params.csv" \\
     --sim-dir "$SCRATCH" \\
     --output-base "$WORK_BASE/data/GLA" \\
     --only {sim_name} \\
@@ -118,7 +117,7 @@ python3 "$WORK_BASE/extract_data.py" \\
 # ── Copia risultati leggeri su /work ──
 echo "=== Copying results to /work... ==="
 mkdir -p "$WORK_SIM"
-for f in log.cosim_driver log.extract_data cosim_state.json cosim_driver.py structural_trajectory.csv; do
+for f in log.cosim_driver log.extract_data cosim_state.json structural_trajectory.csv; do
     [ -f "$SCRATCH/$f" ] && cp "$SCRATCH/$f" "$WORK_SIM/" || true
 done
 [ -d "$SCRATCH/postProcessing" ] && cp -r "$SCRATCH/postProcessing" "$WORK_SIM/" || true
@@ -128,34 +127,14 @@ echo "=== Full case on: $SCRATCH (auto-deleted after 30 days) ==="
 """
 
 
-# ─────────────────────── Filtro righe metadata ───────────────────────────────
-
-def select_rows(all_rows):
-    selected = []
-    counts = {fam: 0 for fam in SUBSET}
-    for row in all_rows:
-        fam = row["family"]
-        if fam not in SUBSET:
-            continue
-        cfg = SUBSET[fam]
-        if cfg["split"] is not None and row["split"] != cfg["split"]:
-            continue
-        if cfg["max_count"] is not None and counts[fam] >= cfg["max_count"]:
-            continue
-        selected.append(row)
-        counts[fam] += 1
-    return selected
-
-
-# ─────────────────────── Creazione una sim ───────────────────────────────────
+# ─────────────────────── Setup una sim ───────────────────────────────────────
 
 def setup_one_sim(row, output_dir: Path, dry_run: bool):
     sim_name = row["sim_name"]
     sim_dir  = output_dir / sim_name
 
     if sim_dir.exists():
-        traj = sim_dir / "structural_trajectory.csv"
-        if traj.exists():
+        if (sim_dir / "structural_trajectory.csv").exists():
             return sim_dir, "done"
         return sim_dir, "exists"
 
@@ -164,171 +143,151 @@ def setup_one_sim(row, output_dir: Path, dry_run: bool):
 
     sim_dir.mkdir(parents=True)
 
-    # Scrivi solo cosim_driver.py (patchato) e sim_info.txt
-    # Il resto viene copiato dal PBS script dalla cosim_main sul cluster
+    # Copia e patcha cosim_driver.py
     driver_src = Path(__file__).parent / "cosim_main" / "cosim_driver.py"
     driver_dst = sim_dir / "cosim_driver.py"
-    import shutil
     shutil.copy2(driver_src, driver_dst)
 
-    # Patcha gust e flap nel driver
     delta_times, delta_angles = setup_sims.build_flap_schedule(row)
     setup_sims.patch_cosim_driver(driver_dst, row, delta_times, delta_angles)
 
-    # Scrivi PBS
-    W_g0 = float(row["W_g0"])
-    T_g  = float(row["T_g"])
-    pbs_content = PBS_TEMPLATE.format(
-        sim_name      = sim_name,
-        n_procs       = N_PROCS,
-        walltime      = WALLTIME,
-        work_base     = WORK_BASE,
-        work_sim_dir  = str(output_dir / sim_name),
-        container     = CONTAINER_ABS,
-        checkpoint_name = CHECKPOINT_NAME,
-        window        = WINDOW,
-        dt            = DT,
-        t_end         = T_SIM,
-        W_g0          = W_g0,
-        T_g           = T_g,
-    )
-    (sim_dir / "job.pbs").write_text(pbs_content)
+    # Scrivi sim_params.csv (una riga, usato da extract_data.py)
+    with open(sim_dir / "sim_params.csv", "w", newline="") as f:
+        writer = csv.DictWriter(f, fieldnames=gdp.FIELDNAMES, extrasaction="ignore")
+        writer.writeheader()
+        writer.writerow(row)
 
-    # Info file
-    delta_times, delta_angles = setup_sims.build_flap_schedule(row)
-    info = (
+    # Scrivi PBS
+    pbs = PBS_TEMPLATE.format(
+        sim_name        = sim_name,
+        n_procs         = N_PROCS,
+        walltime        = WALLTIME,
+        work_base       = WORK_BASE,
+        work_sim_dir    = str(output_dir / sim_name),
+        container       = CONTAINER_ABS,
+        checkpoint_name = CHECKPOINT_NAME,
+        window          = WINDOW,
+        dt              = DT,
+        t_end           = T_SIM,
+        W_g0            = float(row["W_g0"]),
+        T_g             = float(row["T_g"]),
+    )
+    (sim_dir / "job.pbs").write_text(pbs)
+
+    # sim_info.txt
+    (sim_dir / "sim_info.txt").write_text(
         f"# {sim_name}\n"
         f"family={row['family']}  law={row['law']}  split={row['split']}\n"
-        f"R={row['R']}  T_g={T_g}  W_g0={W_g0}\n"
-        f"delta_max={row.get('delta_max', 0)}\n"
+        f"R={row['R']}  T_g={row['T_g']}  W_g0={row['W_g0']}\n"
+        f"delta_max={row['delta_max']}  dt_ramp={row['dt_ramp']}\n"
         f"DELTA_TIMES={delta_times}\n"
         f"DELTA_ANGLES={delta_angles}\n"
-        f"gust: t_start=0.0  t_end={T_g:.4f}s  W_g0={W_g0:.4f} m/s\n"
     )
-    (sim_dir / "sim_info.txt").write_text(info)
-
     return sim_dir, "created"
 
 
-# ─────────────────────── Main ────────────────────────────────────────────────
+# ─────────────────────── Main ─────────────────────────────────────────────────
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__,
                                      formatter_class=argparse.RawDescriptionHelpFormatter)
-    parser.add_argument("--metadata",   type=str, default="metadata_merged.csv")
     parser.add_argument("--output-dir", type=str,
                         default="/work/u10677113/NACA2312/dataset_weekend")
-    parser.add_argument("--dry-run", action="store_true",
-                        help="Stampa senza creare nulla")
-    parser.add_argument("--submit", action="store_true",
-                        help="Invia i PBS job dopo il setup")
+    parser.add_argument("--dry-run",  action="store_true")
+    parser.add_argument("--submit",   action="store_true")
+    parser.add_argument("--seed",     type=int, default=SEED)
     args = parser.parse_args()
 
-    metadata_path = Path(args.metadata)
-    output_dir    = Path(args.output_dir)
+    output_dir = Path(args.output_dir)
 
-    if not metadata_path.exists():
-        print(f"ERROR: {metadata_path} non trovato")
-        sys.exit(1)
+    # Genera parametri con la nuova logica isolata
+    rows_A  = gdp.generate_A( N_A_TRAIN,  N_A_TEST,  args.seed)
+    rows_B1 = gdp.generate_B1(N_B1_TRAIN, N_B1_TEST, args.seed)
 
-    with open(metadata_path) as f:
-        all_rows = list(csv.DictReader(f))
-
-    rows = select_rows(all_rows)
-
-    # Conteggio per famiglia
-    from collections import Counter
-    fam_counts = Counter(r["family"] for r in rows)
+    # Assegna sim_name e global_index
+    all_rows = []
+    for i, row in enumerate(rows_A + rows_B1):
+        row["global_index"] = i
+        row["sim_name"] = f"sim_{row['family']}_{row['index']:03d}_{row['split']}"
+        all_rows.append(row)
 
     print(f"\nGLA Weekend Subset — PCA dataset")
-    print(f"  Metadata:    {metadata_path}")
     print(f"  Output dir:  {output_dir}")
-    print(f"  Simulazioni: {len(rows)}")
-    for fam, n in sorted(fam_counts.items()):
-        print(f"    {fam}: {n} sim")
+    print(f"  A  (gust puro, δ=0):    {N_A_TRAIN} train + {N_A_TEST} test = {N_A_TRAIN+N_A_TEST}")
+    print(f"  B1 (flap puro, W_g=0):  {N_B1_TRAIN} train + {N_B1_TEST} test = {N_B1_TRAIN+N_B1_TEST}")
+    print(f"  Totale: {len(all_rows)} sim  (~{len(all_rows)*2}h stima con parallelismo)")
     print(f"  Walltime/sim: {WALLTIME}")
-    print(f"  Stima totale: ~{len(rows)*2}h (con parallelismo)")
     if args.dry_run:
-        print(f"\n  [DRY RUN — nessuna directory verrà creata]\n")
+        print(f"\n  [DRY RUN]\n")
 
-    print(f"\n{'Sim':<30} {'Fam':<5} {'Law':>3} {'Split':<6} {'W_g0':>6} {'T_g':>5} {'δ_max':>6} {'dt_ramp':>7} {'Stato'}")
-    print(f"{'-'*82}")
+    print(f"\n{'Sim':<30} {'Fam':<4} {'Split':<6} {'W_g0':>6} {'T_g':>5} {'δ_max':>6} {'dt_ramp':>7}  Stato")
+    print(f"{'-'*78}")
 
     pbs_files = []
-    n_created = 0; n_done = 0; n_exists = 0
+    n_created = n_done = n_exists = 0
 
     if not args.dry_run:
         output_dir.mkdir(parents=True, exist_ok=True)
 
-    for row in rows:
+    for row in all_rows:
         sim_dir, status = setup_one_sim(row, output_dir, args.dry_run)
-        W_g0     = float(row["W_g0"])
-        T_g      = float(row["T_g"])
-        try:    delta_max = float(row["delta_max"])
-        except: delta_max = 0.0
-        try:    dt_ramp = float(row["dt_ramp"]) if row.get("dt_ramp") not in ("", "nan", None) else float("nan")
-        except: dt_ramp = float("nan")
-        dt_str = f"{dt_ramp:>7.3f}" if dt_ramp == dt_ramp else "    ---"
-        print(f"{row['sim_name']:<30} {row['family']:<5} {row['law']:>3} "
-              f"{row['split']:<6} {W_g0:>6.1f} {T_g:>5.2f} {delta_max:>6.1f} {dt_str}  {status}")
+        print(f"{row['sim_name']:<30} {row['family']:<4} {row['split']:<6} "
+              f"{float(row['W_g0']):>6.1f} {float(row['T_g']):>5.2f} "
+              f"{float(row['delta_max']):>+6.1f} {float(row['dt_ramp']):>7.3f}  {status}")
         if status == "created":
-            n_created += 1
-            pbs_files.append(sim_dir / "job.pbs")
+            n_created += 1; pbs_files.append(sim_dir / "job.pbs")
         elif status == "done":
             n_done += 1
         elif status == "exists":
-            n_exists += 1
-            pbs_files.append(sim_dir / "job.pbs")
+            n_exists += 1; pbs_files.append(sim_dir / "job.pbs")
 
     print(f"\n{'='*50}")
-    print(f"Creati: {n_created}  Già pronti (no traj): {n_exists}  Completati: {n_done}")
+    print(f"Creati: {n_created}  Esistenti: {n_exists}  Completati: {n_done}")
 
     if args.dry_run:
         print("\n[DRY RUN] Rimuovi --dry-run per procedere.")
         return
 
-    # Genera submit_weekend.sh
-    import shutil
-    shutil.copy2(metadata_path, output_dir / "metadata_merged.csv")
+    # Scrivi metadata globale del subset
+    with open(output_dir / "metadata_weekend.csv", "w", newline="") as f:
+        writer = csv.DictWriter(f, fieldnames=gdp.FIELDNAMES, extrasaction="ignore")
+        writer.writeheader()
+        writer.writerows(all_rows)
 
+    # Genera submit_weekend.sh
     submit_script = output_dir / "submit_weekend.sh"
     with open(submit_script, "w") as f:
         f.write("#!/bin/bash\n")
-        f.write(f"# Submit {len(pbs_files)} GLA weekend jobs\n")
-        f.write(f"# Generato da generate_weekend_subset.py\n\n")
+        f.write(f"# Submit {len(pbs_files)} GLA weekend jobs\n\n")
         f.write(". /etc/profile.d/pbs.sh 2>/dev/null || true\n\n")
         f.write("SUBMITTED=0\nSKIPPED=0\n\n")
         for pbs in pbs_files:
-            sim_dir = pbs.parent
-            traj    = sim_dir / "structural_trajectory.csv"
+            traj = pbs.parent / "structural_trajectory.csv"
             f.write(f'if [ -f "{traj}" ]; then\n')
-            f.write(f'    echo "SKIP (done): {sim_dir.name}"\n')
+            f.write(f'    echo "SKIP (done): {pbs.parent.name}"\n')
             f.write(f'    SKIPPED=$((SKIPPED+1))\n')
             f.write(f'else\n')
-            f.write(f'    qsub "{pbs}" && SUBMITTED=$((SUBMITTED+1)) || echo "FAILED: {sim_dir.name}"\n')
+            f.write(f'    qsub "{pbs}" && SUBMITTED=$((SUBMITTED+1)) || echo "FAILED: {pbs.parent.name}"\n')
             f.write(f'    sleep 0.3\n')
             f.write(f'fi\n\n')
-        f.write('echo ""\n')
-        f.write('echo "Submitted: $SUBMITTED  Skipped (done): $SKIPPED"\n')
+        f.write('echo "Submitted: $SUBMITTED  Skipped: $SKIPPED"\n')
     submit_script.chmod(0o755)
 
-    print(f"\nScript di submit → {submit_script}")
-    print(f"\nPer lanciare sul cluster:")
-    print(f"  cd {output_dir}")
-    print(f"  bash submit_weekend.sh")
-    print(f"\nMonitoraggio: watch qstat -u u10677113")
+    print(f"\nScript → {submit_script}")
+    print(f"\nSul cluster:")
+    print(f"  cd {output_dir} && bash submit_weekend.sh")
+    print(f"  watch qstat -u u10677113")
 
     if args.submit:
         print("\n--- Invio PBS jobs ---")
         for pbs in pbs_files:
-            sim_dir = pbs.parent
-            if (sim_dir / "structural_trajectory.csv").exists():
+            if (pbs.parent / "structural_trajectory.csv").exists():
                 continue
-            result = subprocess.run(["qsub", str(pbs)], capture_output=True, text=True)
-            if result.returncode == 0:
-                print(f"  Submitted: {sim_dir.name} → {result.stdout.strip()}")
+            r = subprocess.run(["qsub", str(pbs)], capture_output=True, text=True)
+            if r.returncode == 0:
+                print(f"  OK:     {pbs.parent.name} → {r.stdout.strip()}")
             else:
-                print(f"  FAILED:    {sim_dir.name} → {result.stderr.strip()}")
+                print(f"  FAILED: {pbs.parent.name} → {r.stderr.strip()}")
 
 
 if __name__ == "__main__":
