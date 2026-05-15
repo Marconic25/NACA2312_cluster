@@ -40,6 +40,7 @@ DT              = 7e-5
 # Dimensioni subset weekend
 N_A_TRAIN  = 6;  N_A_TEST  = 2
 N_B1_TRAIN = 8;  N_B1_TEST = 2
+N_C1_TRAIN = 4;  N_C1_TEST = 0
 SEED       = 42
 
 # ─────────────────────── PBS template ────────────────────────────────────────
@@ -203,18 +204,20 @@ def main():
     # Genera parametri con la nuova logica isolata
     rows_A  = gdp.generate_A( N_A_TRAIN,  N_A_TEST,  args.seed)
     rows_B1 = gdp.generate_B1(N_B1_TRAIN, N_B1_TEST, args.seed)
+    rows_C1 = gdp.generate_C1(N_C1_TRAIN, N_C1_TEST, args.seed)
 
     # Assegna sim_name e global_index
     all_rows = []
-    for i, row in enumerate(rows_A + rows_B1):
+    for i, row in enumerate(rows_A + rows_B1 + rows_C1):
         row["global_index"] = i
         row["sim_name"] = f"sim_{row['family']}_{row['index']:03d}_{row['split']}"
         all_rows.append(row)
 
     print(f"\nGLA Weekend Subset — PCA dataset")
     print(f"  Output dir:  {output_dir}")
-    print(f"  A  (gust puro, δ=0):    {N_A_TRAIN} train + {N_A_TEST} test = {N_A_TRAIN+N_A_TEST}")
-    print(f"  B1 (flap puro, W_g=0):  {N_B1_TRAIN} train + {N_B1_TEST} test = {N_B1_TRAIN+N_B1_TEST}")
+    print(f"  A  (gust puro, δ=0):      {N_A_TRAIN} train + {N_A_TEST} test = {N_A_TRAIN+N_A_TEST}")
+    print(f"  B1 (flap puro, W_g=0):   {N_B1_TRAIN} train + {N_B1_TEST} test = {N_B1_TRAIN+N_B1_TEST}")
+    print(f"  C1 (gust + flap):         {N_C1_TRAIN} train + {N_C1_TEST} test = {N_C1_TRAIN+N_C1_TEST}")
     print(f"  Totale: {len(all_rows)} sim  (~{len(all_rows)*2}h stima con parallelismo)")
     print(f"  Walltime/sim: {WALLTIME}")
     if args.dry_run:
