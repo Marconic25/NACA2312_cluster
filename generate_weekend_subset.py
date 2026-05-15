@@ -32,7 +32,7 @@ WORK_BASE       = "/work/u10677113/NACA2312"
 CONTAINER_ABS   = "/work/u10677113/of7.sif"
 CHECKPOINT_NAME = "checkpoint_W0_baseline"
 T_SIM           = 3.0       # durata relativa dal checkpoint [s]
-WALLTIME        = "03:30:00"
+WALLTIME        = "05:00:00"
 N_PROCS         = 16
 WINDOW          = 286
 DT              = 7e-5
@@ -86,6 +86,19 @@ cp "{work_sim_dir}/cosim_driver.py" "$SCRATCH/cosim_driver.py"
 # ── Copia checkpoint come 'checkpoint/' nella scratch ──
 echo "=== Copying checkpoint... ==="
 cp -r "$CHECKPOINT_SRC" "$SCRATCH/checkpoint"
+
+# ── Fix BC gust nei campi binari del checkpoint ──
+# I campi U nei processor*/t_latest/ hanno Wg0=0 hardcodato dal baseline.
+# Sostituiamo il file U di ogni processor con quello da 0.orig/ (che include
+# fixedInletU aggiornato con il Wg0 corretto) così OF legge la BC giusta.
+echo "=== Patching gust BC in checkpoint processor fields... ==="
+for proc in "$SCRATCH"/checkpoint/processor*/; do
+    latest=$(ls -d "$proc"[0-9]*.[0-9]*/ 2>/dev/null | sort -V | tail -1)
+    if [ -n "$latest" ] && [ -f "$SCRATCH/0.orig/U" ]; then
+        cp "$SCRATCH/0.orig/U" "$latest/U"
+        echo "  Patched: $latest/U"
+    fi
+done
 
 cd "$SCRATCH"
 
