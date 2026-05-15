@@ -13,5 +13,5 @@ source /work/u10677113/NACA2312/my_venv/bin/activate
 cd cosim_main
 python3 cosim_driver.py --np 16 --window 50 --t-end 3.0 \
     --from-checkpoint \
-    --gust-w0 60.0 --gust-t-start 0.1 --gust-t-end 0.9 \
+    --gust-w0 40.0 --gust-t-start 0.1 --gust-t-end 0.9 \
     2>&1 | tee log.cosim_gust
