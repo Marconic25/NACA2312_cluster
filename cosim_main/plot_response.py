@@ -174,6 +174,7 @@ def plot(t_f, Fy_f, Mz_f, t_s, h_s, a_s, hd_s, ad_s, t_end, t_start=0.0):
     delta_s = np.array([delta_schedule(t) for t in t_s])
 
     fig, axes = plt.subplots(9, 1, figsize=(13, 22), sharex=True)
+    axes[0].set_xlim(t_start, t_end)
     fig.suptitle(
         f"Wing aeroelastic response  –  Wg0={GUST_W0:.0f} m/s, U∞={U_INF:.0f} m/s",
         fontsize=13, fontweight="bold"

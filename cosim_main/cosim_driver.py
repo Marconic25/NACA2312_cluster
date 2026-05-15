@@ -922,7 +922,7 @@ def main():
     print(f"  Case: {CASE_DIR}")
 
     traj_path = CASE_DIR / "structural_trajectory.csv"
-    T_CSV_SKIP = 0.1   # skip initial CFD transient from CSV
+    T_CSV_SKIP = 0.0   # no skip: checkpoint warm-start eliminates transient
     traj_buf = []      # global buffer: accumulate all windows, smooth once at end
 
     while t_cur < t_end - 1e-12:
