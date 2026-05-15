@@ -1099,6 +1099,7 @@ def main():
     subprocess.run(
         [sys.executable, str(CASE_DIR / "plot_response.py"),
          "--t-end",        str(t_end_rel),
+         "--gust-w0",      str(GUST_W0),
          "--gust-t-start", str(gust_start_rel),
          "--gust-t-end",   str(gust_end_rel)],
         cwd=CASE_DIR,

@@ -156,7 +156,7 @@ def annotate_events(ax):
 
 
 RHO  = 1.225   # air density [kg/m³] (from controlDict rhoInf)
-AREF = 0.25    # reference area [m²] (from controlDict Aref = chord * span)
+AREF = 0.05    # reference area [m²] (chord=1m × span=0.05m, matches controlDict Aref)
 Q_INF = 0.5 * RHO * U_INF**2   # dynamic pressure [Pa]
 
 
@@ -265,10 +265,14 @@ def main():
                         help="Override gust start time for plot annotations [s]")
     parser.add_argument("--gust-t-end",   type=float, default=None,
                         help="Override gust end time for plot annotations [s]")
+    parser.add_argument("--gust-w0",      type=float, default=None,
+                        help="Override peak gust velocity [m/s]")
     args = parser.parse_args()
 
-    # Override gust timing for annotations if provided (relative to run start)
-    global GUST_T_START, GUST_T_END, T_GUST_ARRIVE, T_FLAP_START, T_FLAP_END
+    # Override gust parameters for annotations if provided (relative to run start)
+    global GUST_T_START, GUST_T_END, GUST_W0, T_GUST_ARRIVE, T_FLAP_START, T_FLAP_END
+    if args.gust_w0 is not None:
+        GUST_W0 = args.gust_w0
     if args.gust_t_start is not None:
         GUST_T_START  = args.gust_t_start
         T_GUST_ARRIVE = GUST_T_START + 10.0 / U_INF
