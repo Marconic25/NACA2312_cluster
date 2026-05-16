@@ -28,10 +28,9 @@ import generate_dataset_params as gdp   # riusa generate_A, generate_B1
 
 # ─────────────────────── Configurazione cluster ──────────────────────────────
 
-WORK_BASE       = "/work/u10677113/NACA2312"
-CONTAINER_ABS   = "/work/u10677113/of7.sif"
-CHECKPOINT_NAME = "checkpoint_W0_baseline"
-T_SIM           = 3.0       # durata relativa dal checkpoint [s]
+WORK_BASE     = "/work/u10677113/NACA2312"
+CONTAINER_ABS = "/work/u10677113/of7.sif"
+T_SIM         = 3.0       # durata relativa dal checkpoint [s]
 WALLTIME        = "05:00:00"
 N_PROCS         = 16
 WINDOW          = 50
@@ -58,10 +57,10 @@ WORK_BASE="{work_base}"
 WORK_SIM="{work_sim_dir}"
 SCRATCH="/scratch_local/$USER/{sim_name}"
 CONTAINER_ABS="{container}"
-CHECKPOINT_SRC="$WORK_BASE/cosim_main/{checkpoint_name}"
+CHECKPOINT_SRC="$WORK_BASE/cosim_main/checkpoint"
 WRAPPER_DIR="$HOME/bin_of7"
 
-# ── Setup wrappers OpenFOAM ──
+# ── Setup wrappers OpenFOAM (identico a submit_gust.pbs) ──
 mkdir -p "$WRAPPER_DIR"
 for cmd in decomposePar pimpleFoam reconstructPar mapFields topoSet; do
     cat > "$WRAPPER_DIR/$cmd" <<WRAPPER
@@ -72,13 +71,7 @@ WRAPPER
 done
 export PATH="$WRAPPER_DIR:$PATH"
 
-# ── Copia caso su scratch_local (identica struttura di submit_gust.pbs) ──
-# 1. Copia cosim_main/ senza processor*, postProcessing, checkpoint
-# 2. Copia i processor* dal checkpoint direttamente come processor* nella scratch
-#    (identico a come submit_gust.pbs li aveva già in cosim_main/)
-# 3. Copia checkpoint/ per cosim_state.json (--from-checkpoint lo legge da lì)
-# In questo modo write_gust_inlet() scrive fixedInletU corretto PRIMA che
-# OF legga i campi — esattamente come nella run con W=60 che funzionava.
+# ── Copia caso su scratch_local ──
 echo "=== Copying case to scratch_local... ==="
 mkdir -p "$SCRATCH"
 rsync -a --exclude='processor*' --exclude='postProcessing' --exclude='postProcessing_*' \\
@@ -86,10 +79,7 @@ rsync -a --exclude='processor*' --exclude='postProcessing' --exclude='postProces
       --exclude='__pycache__' --exclude='checkpoint' --exclude='checkpoint_*' \\
       "$WORK_BASE/cosim_main/" "$SCRATCH/"
 
-# Sostituisci cosim_driver.py con quello patchato per questa sim
-cp "{work_sim_dir}/cosim_driver.py" "$SCRATCH/cosim_driver.py"
-
-# Copia checkpoint/ con processor* dentro (come si aspetta load_from_checkpoint)
+# ── Copia checkpoint (processor* + cosim_state.json) ──
 echo "=== Copying checkpoint... ==="
 mkdir -p "$SCRATCH/checkpoint"
 cp "$CHECKPOINT_SRC/cosim_state.json"    "$SCRATCH/checkpoint/"
@@ -112,27 +102,20 @@ python3 cosim_driver.py \\
     --gust-w0 {W_g0:.4f} \\
     --gust-t-start 0.0 \\
     --gust-t-end {T_g:.6f} \\
+    --delta-times {delta_times_str} \\
+    --delta-angles {delta_angles_str} \\
     2>&1 | tee log.cosim_driver
 
 echo "=== Co-simulation done ==="
 
-# ── Estrazione timeseries ──
-echo "=== Extracting timeseries... ==="
-python3 "$WORK_BASE/extract_data.py" \\
-    --metadata "{work_sim_dir}/sim_params.csv" \\
-    --sim-dir "$SCRATCH" \\
-    --output-base "$WORK_BASE/data/GLA" \\
-    --only {sim_name} \\
-    --only-timeseries \\
-    2>&1 | tee log.extract_data
-
 # ── Copia risultati leggeri su /work ──
 echo "=== Copying results to /work... ==="
 mkdir -p "$WORK_SIM"
-for f in log.cosim_driver log.extract_data cosim_state.json structural_trajectory.csv; do
+for f in log.cosim_driver cosim_state.json structural_trajectory.csv; do
     [ -f "$SCRATCH/$f" ] && cp "$SCRATCH/$f" "$WORK_SIM/" || true
 done
 [ -d "$SCRATCH/postProcessing" ] && cp -r "$SCRATCH/postProcessing" "$WORK_SIM/" || true
+[ -d "$SCRATCH/figures" ]        && cp -r "$SCRATCH/figures"        "$WORK_SIM/" || true
 
 echo "=== Job complete: {sim_name} ==="
 echo "=== Full case on: $SCRATCH (auto-deleted after 30 days) ==="
@@ -155,34 +138,32 @@ def setup_one_sim(row, output_dir: Path, dry_run: bool):
 
     sim_dir.mkdir(parents=True)
 
-    # Copia e patcha cosim_driver.py
-    driver_src = Path(__file__).parent / "cosim_main" / "cosim_driver.py"
-    driver_dst = sim_dir / "cosim_driver.py"
-    shutil.copy2(driver_src, driver_dst)
-
+    # Flap schedule → CLI strings for --delta-times and --delta-angles
     delta_times, delta_angles = setup_sims.build_flap_schedule(row)
-    setup_sims.patch_cosim_driver(driver_dst, row, delta_times, delta_angles)
+    delta_times_str  = " ".join(f"{v:.6f}" for v in delta_times)
+    delta_angles_str = " ".join(f"{v:.6f}" for v in delta_angles)
 
-    # Scrivi sim_params.csv (una riga, usato da extract_data.py)
+    # Scrivi sim_params.csv (una riga, per riferimento)
     with open(sim_dir / "sim_params.csv", "w", newline="") as f:
         writer = csv.DictWriter(f, fieldnames=gdp.FIELDNAMES, extrasaction="ignore")
         writer.writeheader()
         writer.writerow(row)
 
-    # Scrivi PBS
+    # Scrivi PBS — nessun patch del driver, tutto via CLI
     pbs = PBS_TEMPLATE.format(
-        sim_name        = sim_name,
-        n_procs         = N_PROCS,
-        walltime        = WALLTIME,
-        work_base       = WORK_BASE,
-        work_sim_dir    = str(output_dir / sim_name),
-        container       = CONTAINER_ABS,
-        checkpoint_name = CHECKPOINT_NAME,
-        window          = WINDOW,
-        dt              = DT,
-        t_end           = T_SIM,
-        W_g0            = float(row["W_g0"]),
-        T_g             = float(row["T_g"]),
+        sim_name         = sim_name,
+        n_procs          = N_PROCS,
+        walltime         = WALLTIME,
+        work_base        = WORK_BASE,
+        work_sim_dir     = str(output_dir / sim_name),
+        container        = CONTAINER_ABS,
+        window           = WINDOW,
+        dt               = DT,
+        t_end            = T_SIM,
+        W_g0             = float(row["W_g0"]),
+        T_g              = float(row["T_g"]),
+        delta_times_str  = delta_times_str,
+        delta_angles_str = delta_angles_str,
     )
     (sim_dir / "job.pbs").write_text(pbs)
 

@@ -825,13 +825,19 @@ def main():
     parser.add_argument("--gust-w0",      type=float, default=None, help="Peak gust velocity [m/s]")
     parser.add_argument("--gust-t-start", type=float, default=None, help="Gust start time [s]")
     parser.add_argument("--gust-t-end",   type=float, default=None, help="Gust end time [s]")
+    parser.add_argument("--delta-times",  type=float, nargs="+", default=None,
+                        help="Flap schedule time knots [s], e.g. --delta-times 0 0.2 0.5 3.0")
+    parser.add_argument("--delta-angles", type=float, nargs="+", default=None,
+                        help="Flap schedule angle knots [deg], e.g. --delta-angles 0 0 10 10")
     args = parser.parse_args()
 
-    # Override gust parameters from CLI if provided
-    global GUST_W0, GUST_T_START, GUST_T_END
-    if args.gust_w0      is not None: GUST_W0      = args.gust_w0
-    if args.gust_t_start is not None: GUST_T_START = args.gust_t_start
-    if args.gust_t_end   is not None: GUST_T_END   = args.gust_t_end
+    # Override gust and flap parameters from CLI if provided
+    global GUST_W0, GUST_T_START, GUST_T_END, DELTA_TIMES, DELTA_ANGLES
+    if args.gust_w0      is not None: GUST_W0       = args.gust_w0
+    if args.gust_t_start is not None: GUST_T_START  = args.gust_t_start
+    if args.gust_t_end   is not None: GUST_T_END    = args.gust_t_end
+    if args.delta_times  is not None: DELTA_TIMES   = args.delta_times
+    if args.delta_angles is not None: DELTA_ANGLES  = args.delta_angles
 
     # Structural state
     h, hd, a, ad = 0.0, 0.0, 0.0, 0.0
