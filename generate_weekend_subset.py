@@ -124,13 +124,22 @@ echo "=== Full case on: $SCRATCH (auto-deleted after 30 days) ==="
 
 # ─────────────────────── Setup una sim ───────────────────────────────────────
 
-def setup_one_sim(row, output_dir: Path, dry_run: bool):
+def setup_one_sim(row, output_dir: Path, dry_run: bool, overwrite_pbs: bool = False):
     sim_name = row["sim_name"]
     sim_dir  = output_dir / sim_name
+
+    # Flap schedule → CLI strings for --delta-times and --delta-angles
+    delta_times, delta_angles = setup_sims.build_flap_schedule(row)
+    delta_times_str  = " ".join(f"{v:.6f}" for v in delta_times)
+    delta_angles_str = " ".join(f"{v:.6f}" for v in delta_angles)
 
     if sim_dir.exists():
         if (sim_dir / "structural_trajectory.csv").exists():
             return sim_dir, "done"
+        if overwrite_pbs and not dry_run:
+            # Rigenera solo il PBS con la nuova logica CLI
+            _write_pbs(sim_dir, row, output_dir, delta_times_str, delta_angles_str)
+            return sim_dir, "pbs-updated"
         return sim_dir, "exists"
 
     if dry_run:
@@ -138,34 +147,13 @@ def setup_one_sim(row, output_dir: Path, dry_run: bool):
 
     sim_dir.mkdir(parents=True)
 
-    # Flap schedule → CLI strings for --delta-times and --delta-angles
-    delta_times, delta_angles = setup_sims.build_flap_schedule(row)
-    delta_times_str  = " ".join(f"{v:.6f}" for v in delta_times)
-    delta_angles_str = " ".join(f"{v:.6f}" for v in delta_angles)
-
     # Scrivi sim_params.csv (una riga, per riferimento)
     with open(sim_dir / "sim_params.csv", "w", newline="") as f:
         writer = csv.DictWriter(f, fieldnames=gdp.FIELDNAMES, extrasaction="ignore")
         writer.writeheader()
         writer.writerow(row)
 
-    # Scrivi PBS — nessun patch del driver, tutto via CLI
-    pbs = PBS_TEMPLATE.format(
-        sim_name         = sim_name,
-        n_procs          = N_PROCS,
-        walltime         = WALLTIME,
-        work_base        = WORK_BASE,
-        work_sim_dir     = str(output_dir / sim_name),
-        container        = CONTAINER_ABS,
-        window           = WINDOW,
-        dt               = DT,
-        t_end            = T_SIM,
-        W_g0             = float(row["W_g0"]),
-        T_g              = float(row["T_g"]),
-        delta_times_str  = delta_times_str,
-        delta_angles_str = delta_angles_str,
-    )
-    (sim_dir / "job.pbs").write_text(pbs)
+    _write_pbs(sim_dir, row, output_dir, delta_times_str, delta_angles_str)
 
     # sim_info.txt
     (sim_dir / "sim_info.txt").write_text(
@@ -179,6 +167,26 @@ def setup_one_sim(row, output_dir: Path, dry_run: bool):
     return sim_dir, "created"
 
 
+def _write_pbs(sim_dir: Path, row: dict, output_dir: Path,
+               delta_times_str: str, delta_angles_str: str):
+    pbs = PBS_TEMPLATE.format(
+        sim_name         = row["sim_name"],
+        n_procs          = N_PROCS,
+        walltime         = WALLTIME,
+        work_base        = WORK_BASE,
+        work_sim_dir     = str(output_dir / row["sim_name"]),
+        container        = CONTAINER_ABS,
+        window           = WINDOW,
+        dt               = DT,
+        t_end            = T_SIM,
+        W_g0             = float(row["W_g0"]),
+        T_g              = float(row["T_g"]),
+        delta_times_str  = delta_times_str,
+        delta_angles_str = delta_angles_str,
+    )
+    (sim_dir / "job.pbs").write_text(pbs)
+
+
 # ─────────────────────── Main ─────────────────────────────────────────────────
 
 def main():
@@ -186,9 +194,11 @@ def main():
                                      formatter_class=argparse.RawDescriptionHelpFormatter)
     parser.add_argument("--output-dir", type=str,
                         default="/work/u10677113/NACA2312/dataset_weekend")
-    parser.add_argument("--dry-run",  action="store_true")
-    parser.add_argument("--submit",   action="store_true")
-    parser.add_argument("--seed",     type=int, default=SEED)
+    parser.add_argument("--dry-run",      action="store_true")
+    parser.add_argument("--submit",       action="store_true")
+    parser.add_argument("--overwrite-pbs", action="store_true",
+                        help="Rigenera job.pbs per sim esistenti (senza ricreare la dir)")
+    parser.add_argument("--seed",         type=int, default=SEED)
     args = parser.parse_args()
 
     output_dir = Path(args.output_dir)
@@ -219,13 +229,14 @@ def main():
     print(f"{'-'*78}")
 
     pbs_files = []
-    n_created = n_done = n_exists = 0
+    n_created = n_done = n_exists = n_pbs_updated = 0
 
     if not args.dry_run:
         output_dir.mkdir(parents=True, exist_ok=True)
 
     for row in all_rows:
-        sim_dir, status = setup_one_sim(row, output_dir, args.dry_run)
+        sim_dir, status = setup_one_sim(row, output_dir, args.dry_run,
+                                        overwrite_pbs=args.overwrite_pbs)
         print(f"{row['sim_name']:<30} {row['family']:<4} {row['split']:<6} "
               f"{float(row['W_g0']):>6.1f} {float(row['T_g']):>5.2f} "
               f"{float(row['delta_max']):>+6.1f} {float(row['dt_ramp']):>7.3f}  {status}")
@@ -233,11 +244,13 @@ def main():
             n_created += 1; pbs_files.append(sim_dir / "job.pbs")
         elif status == "done":
             n_done += 1
+        elif status == "pbs-updated":
+            n_pbs_updated += 1; pbs_files.append(sim_dir / "job.pbs")
         elif status == "exists":
             n_exists += 1; pbs_files.append(sim_dir / "job.pbs")
 
     print(f"\n{'='*50}")
-    print(f"Creati: {n_created}  Esistenti: {n_exists}  Completati: {n_done}")
+    print(f"Creati: {n_created}  PBS aggiornati: {n_pbs_updated}  Esistenti: {n_exists}  Completati: {n_done}")
 
     if args.dry_run:
         print("\n[DRY RUN] Rimuovi --dry-run per procedere.")
