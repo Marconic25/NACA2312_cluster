@@ -34,7 +34,7 @@ CHECKPOINT_NAME = "checkpoint_W0_baseline"
 T_SIM           = 3.0       # durata relativa dal checkpoint [s]
 WALLTIME        = "05:00:00"
 N_PROCS         = 16
-WINDOW          = 286
+WINDOW          = 50
 DT              = 7e-5
 
 # Dimensioni subset weekend
@@ -72,7 +72,13 @@ WRAPPER
 done
 export PATH="$WRAPPER_DIR:$PATH"
 
-# ── Copia caso su scratch_local ──
+# ── Copia caso su scratch_local (identica struttura di submit_gust.pbs) ──
+# 1. Copia cosim_main/ senza processor*, postProcessing, checkpoint
+# 2. Copia i processor* dal checkpoint direttamente come processor* nella scratch
+#    (identico a come submit_gust.pbs li aveva già in cosim_main/)
+# 3. Copia checkpoint/ per cosim_state.json (--from-checkpoint lo legge da lì)
+# In questo modo write_gust_inlet() scrive fixedInletU corretto PRIMA che
+# OF legga i campi — esattamente come nella run con W=60 che funzionava.
 echo "=== Copying case to scratch_local... ==="
 mkdir -p "$SCRATCH"
 rsync -a --exclude='processor*' --exclude='postProcessing' --exclude='postProcessing_*' \\
@@ -83,23 +89,16 @@ rsync -a --exclude='processor*' --exclude='postProcessing' --exclude='postProces
 # Sostituisci cosim_driver.py con quello patchato per questa sim
 cp "{work_sim_dir}/cosim_driver.py" "$SCRATCH/cosim_driver.py"
 
-# ── Copia checkpoint come 'checkpoint/' nella scratch ──
-echo "=== Copying checkpoint... ==="
-cp -r "$CHECKPOINT_SRC" "$SCRATCH/checkpoint"
-
-# ── Fix BC gust nei campi binari del checkpoint ──
-# I campi U nei processor*/t_latest/ sono file binari OF che contengono
-# il codice C++ della BC embedded come stringa ASCII. Il valore Wg0=0.0000
-# è scritto letteralmente nel binario — lo patchiamo con perl (safe su binari).
-echo "=== Patching gust BC (Wg0) in checkpoint processor U fields... ==="
-WG0_STR=$(printf "%.4f" {W_g0:.4f})
-for proc in "$SCRATCH"/checkpoint/processor*/; do
-    latest=$(ls -d "$proc"[0-9]*.[0-9]*/ 2>/dev/null | sort -V | tail -1)
-    if [ -n "$latest" ] && [ -f "$latest/U" ]; then
-        perl -pi -e "s/const scalar Wg0  = 0\\.0000/const scalar Wg0  = $WG0_STR/g" "$latest/U"
-        echo "  Patched $latest/U  (Wg0=$WG0_STR)"
-    fi
+# Copia i processor* dal checkpoint direttamente nella scratch (come in submit_gust)
+echo "=== Copying checkpoint processor dirs... ==="
+for proc in "$CHECKPOINT_SRC"/processor*/; do
+    cp -r "$proc" "$SCRATCH/$(basename $proc)"
 done
+
+# Copia checkpoint/ per cosim_state.json (letto da --from-checkpoint)
+mkdir -p "$SCRATCH/checkpoint"
+cp "$CHECKPOINT_SRC/cosim_state.json"     "$SCRATCH/checkpoint/"
+cp "$CHECKPOINT_SRC/cosim_state_t0.json"  "$SCRATCH/checkpoint/" 2>/dev/null || true
 
 cd "$SCRATCH"
 
