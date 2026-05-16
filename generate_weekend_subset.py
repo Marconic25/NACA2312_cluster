@@ -89,16 +89,14 @@ rsync -a --exclude='processor*' --exclude='postProcessing' --exclude='postProces
 # Sostituisci cosim_driver.py con quello patchato per questa sim
 cp "{work_sim_dir}/cosim_driver.py" "$SCRATCH/cosim_driver.py"
 
-# Copia i processor* dal checkpoint direttamente nella scratch (come in submit_gust)
-echo "=== Copying checkpoint processor dirs... ==="
-for proc in "$CHECKPOINT_SRC"/processor*/; do
-    cp -r "$proc" "$SCRATCH/$(basename $proc)"
-done
-
-# Copia checkpoint/ per cosim_state.json (letto da --from-checkpoint)
+# Copia checkpoint/ con processor* dentro (come si aspetta load_from_checkpoint)
+echo "=== Copying checkpoint... ==="
 mkdir -p "$SCRATCH/checkpoint"
-cp "$CHECKPOINT_SRC/cosim_state.json"     "$SCRATCH/checkpoint/"
-cp "$CHECKPOINT_SRC/cosim_state_t0.json"  "$SCRATCH/checkpoint/" 2>/dev/null || true
+cp "$CHECKPOINT_SRC/cosim_state.json"    "$SCRATCH/checkpoint/"
+cp "$CHECKPOINT_SRC/cosim_state_t0.json" "$SCRATCH/checkpoint/" 2>/dev/null || true
+for proc in "$CHECKPOINT_SRC"/processor*/; do
+    cp -r "$proc" "$SCRATCH/checkpoint/$(basename $proc)"
+done
 
 cd "$SCRATCH"
 
