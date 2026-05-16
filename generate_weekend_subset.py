@@ -85,7 +85,9 @@ mkdir -p "$SCRATCH/checkpoint"
 cp "$CHECKPOINT_SRC/cosim_state.json"    "$SCRATCH/checkpoint/"
 cp "$CHECKPOINT_SRC/cosim_state_t0.json" "$SCRATCH/checkpoint/" 2>/dev/null || true
 for proc in "$CHECKPOINT_SRC"/processor*/; do
-    cp -r "$proc" "$SCRATCH/checkpoint/$(basename $proc)"
+    dst="$SCRATCH/checkpoint/$(basename $proc)"
+    mkdir -p "$dst"
+    rsync -a "$proc" "$dst/"
 done
 
 cd "$SCRATCH"
