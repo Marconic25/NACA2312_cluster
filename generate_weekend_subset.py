@@ -88,15 +88,16 @@ echo "=== Copying checkpoint... ==="
 cp -r "$CHECKPOINT_SRC" "$SCRATCH/checkpoint"
 
 # ── Fix BC gust nei campi binari del checkpoint ──
-# I campi U nei processor*/t_latest/ hanno Wg0=0 hardcodato dal baseline.
-# Sostituiamo il file U di ogni processor con quello da 0.orig/ (che include
-# fixedInletU aggiornato con il Wg0 corretto) così OF legge la BC giusta.
-echo "=== Patching gust BC in checkpoint processor fields... ==="
+# I campi U nei processor*/t_latest/ sono file binari OF che contengono
+# il codice C++ della BC embedded come stringa ASCII. Il valore Wg0=0.0000
+# è scritto letteralmente nel binario — lo patchiamo con perl (safe su binari).
+echo "=== Patching gust BC (Wg0) in checkpoint processor U fields... ==="
+WG0_STR=$(printf "%.4f" {W_g0:.4f})
 for proc in "$SCRATCH"/checkpoint/processor*/; do
     latest=$(ls -d "$proc"[0-9]*.[0-9]*/ 2>/dev/null | sort -V | tail -1)
-    if [ -n "$latest" ] && [ -f "$SCRATCH/0.orig/U" ]; then
-        cp "$SCRATCH/0.orig/U" "$latest/U"
-        echo "  Patched: $latest/U"
+    if [ -n "$latest" ] && [ -f "$latest/U" ]; then
+        perl -pi -e "s/const scalar Wg0  = 0\\.0000/const scalar Wg0  = $WG0_STR/g" "$latest/U"
+        echo "  Patched $latest/U  (Wg0=$WG0_STR)"
     fi
 done
 
