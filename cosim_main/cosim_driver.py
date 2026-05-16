@@ -715,18 +715,50 @@ def load_from_checkpoint(t_end, dt):
     # Update controlDict: startFrom latestTime so OF picks up checkpoint fields
     update_control_dict(t_orig, dt, use_latest_time=True, write_interval=None)
 
-    # The checkpoint processor dirs have the BC from the baseline run (no gust).
-    # OF reads U BC from the binary field in processor*/0/U — copying fixedInlet
-    # The binary U fields contain the old codedFixedValue (W0=0) from baseline.
-    # By removing dynamicCode/ cache, OF is forced to recompile the codedFixedValue
-    # from fixedInletU (which now has W0=60) at the first timestep.
-    # This is the correct way to change the BC without re-running decomposePar.
-    dyn_code = CASE_DIR / "dynamicCode"
-    if dyn_code.exists():
-        shutil.rmtree(dyn_code)
-    print("  Removed dynamicCode/ — OF will recompile gust BC from fixedInletU at first timestep")
+    # Patch gust parameters directly in binary U fields of all processor dirs.
+    # OF embeds the codedFixedValue C++ code in the binary field — removing
+    # dynamicCode/ is NOT sufficient; the source literals must be sed-patched.
+    _patch_gust_in_processor_U()
+    print(f"  Patched Wg0={GUST_W0:.4f} t0={GUST_T_START:.6f} Tg={GUST_T_END - GUST_T_START:.6f} in processor U fields")
 
     return h, hd, a, ad
+
+
+def _patch_gust_in_processor_U():
+    """Sed-patch gust parameters in binary U fields of all processor time dirs."""
+    import re as _re
+
+    # Find the checkpoint time dir name (e.g. "2.99922") across all processor dirs
+    time_dirs = set()
+    for proc in sorted(CASE_DIR.glob("processor*")):
+        for td in proc.iterdir():
+            if td.is_dir() and td.name not in ("0", "constant", "system"):
+                try:
+                    float(td.name)
+                    time_dirs.add(td.name)
+                except ValueError:
+                    pass
+
+    Tg = GUST_T_END - GUST_T_START
+
+    for proc in sorted(CASE_DIR.glob("processor*")):
+        # Patch both time 0/ and checkpoint time dir (whichever exists)
+        dirs_to_patch = [proc / "0"] + [proc / td for td in time_dirs]
+        for td in dirs_to_patch:
+            u_file = td / "U"
+            if not u_file.exists():
+                continue
+            try:
+                txt = u_file.read_bytes().decode("latin-1")
+                txt = _re.sub(r"const scalar Wg0\s*=\s*[\d.eE+\-]+\s*;",
+                              f"const scalar Wg0  = {GUST_W0:.4f};", txt)
+                txt = _re.sub(r"const scalar t0\s*=\s*[\d.eE+\-]+\s*;",
+                              f"const scalar t0   = {GUST_T_START:.6f};", txt)
+                txt = _re.sub(r"const scalar Tg\s*=\s*[\d.eE+\-]+\s*;",
+                              f"const scalar Tg   = {Tg:.6f};", txt)
+                u_file.write_bytes(txt.encode("latin-1"))
+            except Exception as e:
+                print(f"  [WARN] Could not patch {u_file}: {e}")
 
 
 def compute_static_equilibrium():
