@@ -114,8 +114,15 @@ def reconstruct_structural(t_end):
         Fy_f = Fy_med[spike_mask]
         Mz_f = Mz_med[spike_mask]
         t_f = t_arr
+        # Read W_gust and delta if present (columns 7 and 8)
+        if data.shape[1] >= 9:
+            W_gust_arr = data[:, 7][spike_mask]
+            delta_arr  = data[:, 8][spike_mask]
+        else:
+            W_gust_arr = None
+            delta_arr  = None
         print(f"  Loaded {len(t_arr)} samples, t=[{t_arr[0]:.5f}, {t_arr[-1]:.5f}] s")
-        return t_f, Fy_f, Mz_f, t_arr, h_arr, a_arr, hd_arr, ad_arr
+        return t_f, Fy_f, Mz_f, t_arr, h_arr, a_arr, hd_arr, ad_arr, W_gust_arr, delta_arr
 
     # Fallback: read forces and integrate
     print(f"Reading forces up to t={t_end:.3f} s ...")
@@ -139,6 +146,7 @@ def reconstruct_structural(t_end):
         t_f, Fy_f, Mz_f, t_f,
         h_arr * 1000.0, np.degrees(a_arr),
         hd_arr * 1000.0, np.degrees(ad_arr),
+        None, None,  # W_gust and delta not available from fallback
     )
 
 
@@ -160,18 +168,25 @@ AREF = 0.05    # reference area [m²] (chord=1m × span=0.05m, matches controlDi
 Q_INF = 0.5 * RHO * U_INF**2   # dynamic pressure [Pa]
 
 
-def plot(t_f, Fy_f, Mz_f, t_s, h_s, a_s, hd_s, ad_s, t_end, t_start=0.0):
+def plot(t_f, Fy_f, Mz_f, t_s, h_s, a_s, hd_s, ad_s, t_end, t_start=0.0,
+         W_gust_s=None, delta_s_csv=None):
     t_fm, Fy_fm, Mz_fm = t_f, Fy_f, Mz_f
     Cl = Fy_fm / (Q_INF * AREF)
     Cm = Mz_fm / (Q_INF * AREF * 1.0)   # chord = 1.0 m
 
-    # Gust and flap schedules on structural time grid
-    gust_s  = np.array([
-        (GUST_W0 / 2.0) * (1.0 - np.cos(2.0 * np.pi * (t - GUST_T_START) / (GUST_T_END - GUST_T_START)))
-        if GUST_T_START <= t <= GUST_T_END else 0.0
-        for t in t_s
-    ])
-    delta_s = np.array([delta_schedule(t) for t in t_s])
+    # Use CSV columns if available, otherwise recompute from schedule
+    if W_gust_s is not None:
+        gust_s = W_gust_s
+    else:
+        gust_s = np.array([
+            (GUST_W0 / 2.0) * (1.0 - np.cos(2.0 * np.pi * (t - GUST_T_START) / (GUST_T_END - GUST_T_START)))
+            if GUST_T_START <= t <= GUST_T_END else 0.0
+            for t in t_s
+        ])
+    if delta_s_csv is not None:
+        delta_s = delta_s_csv
+    else:
+        delta_s = np.array([delta_schedule(t) for t in t_s])
 
     fig, axes = plt.subplots(9, 1, figsize=(13, 22), sharex=True)
     axes[0].set_xlim(t_start, t_end)
@@ -289,8 +304,9 @@ def main():
     if args.delta_angles is not None:
         DELTA_ANGLES = args.delta_angles
 
-    t_f, Fy_f, Mz_f, t_s, h_s, a_s, hd_s, ad_s = reconstruct_structural(args.t_end)
-    plot(t_f, Fy_f, Mz_f, t_s, h_s, a_s, hd_s, ad_s, args.t_end, t_start=args.t_start)
+    t_f, Fy_f, Mz_f, t_s, h_s, a_s, hd_s, ad_s, W_gust_s, delta_s = reconstruct_structural(args.t_end)
+    plot(t_f, Fy_f, Mz_f, t_s, h_s, a_s, hd_s, ad_s, args.t_end, t_start=args.t_start,
+         W_gust_s=W_gust_s, delta_s_csv=delta_s)
 
 
 if __name__ == "__main__":

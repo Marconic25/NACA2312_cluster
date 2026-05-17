@@ -1095,8 +1095,11 @@ def main():
                 continue
             if (i - skip) % 4 != 0:
                 continue
-            traj_buf.append((t_win[i] - t_offset, h_traj[i], hd_traj[i],
-                             a_traj[i], ad_traj[i], Fy_win[i], Mz_win[i]))
+            t_rel = t_win[i] - t_offset
+            traj_buf.append((t_rel, h_traj[i], hd_traj[i],
+                             a_traj[i], ad_traj[i], Fy_win[i], Mz_win[i],
+                             gust_velocity(t_win[i]),
+                             delta_schedule(t_rel)))
 
         t_cur = t_win_end
         window_idx += 1
@@ -1122,11 +1125,12 @@ def main():
         Fy_s = gaussian_filter1d(traj_arr[:, 5], sigma=sigma)
         Mz_s = gaussian_filter1d(traj_arr[:, 6], sigma=sigma)
         with open(traj_path, "w") as f:
-            f.write("t,h,hd,alpha,ad,Fy,Mz\n")
+            f.write("t,h,hd,alpha,ad,Fy,Mz,W_gust,delta\n")
             for i, row in enumerate(traj_arr):
                 f.write(f"{row[0]:.8e},{row[1]:.8e},{row[2]:.8e},"
                         f"{row[3]:.8e},{row[4]:.8e},"
-                        f"{Fy_s[i]:.6f},{Mz_s[i]:.6f}\n")
+                        f"{Fy_s[i]:.6f},{Mz_s[i]:.6f},"
+                        f"{row[7]:.6f},{row[8]:.6f}\n")
     print(f"  Structural trajectory saved → {traj_path}")
 
     print("\n>>> Generating response plots...")
