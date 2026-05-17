@@ -269,7 +269,7 @@ def write_tabulated6dof(path, times, tx, ty, rot_z_deg):
         f.write(")\n")
 
 
-def compute_motion_tables(t_win, h_arr, alpha_arr):
+def compute_motion_tables(t_win, h_arr, alpha_arr, t_offset=0.0):
     """
     Compute wingMotion and flapMotion tabulated data for a time window.
 
@@ -301,7 +301,7 @@ def compute_motion_tables(t_win, h_arr, alpha_arr):
     for i, t in enumerate(t_win):
         a   = alpha_arr[i]
         h   = h_arr[i]
-        d   = np.radians(delta_schedule(t))
+        d   = np.radians(delta_schedule(t - t_offset))
 
         # Hinge position after wing heave+pitch
         dx  = HINGE_X - EA_X
@@ -988,7 +988,7 @@ def main():
 
         # Compute motion tables
         wing_ty, wing_rz, flap_tx, flap_ty, flap_rz = compute_motion_tables(
-            t_win, h_arr, alpha_arr
+            t_win, h_arr, alpha_arr, t_offset=t_offset
         )
 
         # Write motion .dat files (cover full remaining time so OF never runs out).
@@ -1023,7 +1023,7 @@ def main():
             flap_ty_t,
             flap_rz_t,
         )
-        print(f"  Flap δ: {delta_schedule(t_cur):.2f}° → {delta_schedule(t_win_end):.2f}°")
+        print(f"  Flap δ: {delta_schedule(t_cur - t_offset):.2f}° → {delta_schedule(t_win_end - t_offset):.2f}°")
 
         # Update controlDict for this window.
         # Window 0: startFrom startTime normally (processor*/0/ from decomposePar).
