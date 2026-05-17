@@ -1134,12 +1134,15 @@ def main():
     # Pass gust times relative to run start for correct shading in plot
     gust_start_rel = GUST_T_START - t_offset
     gust_end_rel   = GUST_T_END   - t_offset
+    delta_times_args  = ["--delta-times"]  + [str(v) for v in DELTA_TIMES]
+    delta_angles_args = ["--delta-angles"] + [str(v) for v in DELTA_ANGLES]
     subprocess.run(
         [sys.executable, str(CASE_DIR / "plot_response.py"),
          "--t-end",        str(t_end_rel),
          "--gust-w0",      str(GUST_W0),
          "--gust-t-start", str(gust_start_rel),
-         "--gust-t-end",   str(gust_end_rel)],
+         "--gust-t-end",   str(gust_end_rel),
+         ] + delta_times_args + delta_angles_args,
         cwd=CASE_DIR,
     )
 

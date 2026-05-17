@@ -268,10 +268,15 @@ def main():
                         help="Override gust end time for plot annotations [s]")
     parser.add_argument("--gust-w0",      type=float, default=None,
                         help="Override peak gust velocity [m/s]")
+    parser.add_argument("--delta-times",  type=float, nargs="+", default=None,
+                        help="Flap schedule time knots [s]")
+    parser.add_argument("--delta-angles", type=float, nargs="+", default=None,
+                        help="Flap schedule angle knots [deg]")
     args = parser.parse_args()
 
-    # Override gust parameters for annotations if provided (relative to run start)
+    # Override gust and flap parameters for annotations if provided
     global GUST_T_START, GUST_T_END, GUST_W0, T_GUST_ARRIVE, T_FLAP_START, T_FLAP_END
+    global DELTA_TIMES, DELTA_ANGLES
     if args.gust_w0 is not None:
         GUST_W0 = args.gust_w0
     if args.gust_t_start is not None:
@@ -279,6 +284,10 @@ def main():
         T_GUST_ARRIVE = GUST_T_START + 10.0 / U_INF
     if args.gust_t_end is not None:
         GUST_T_END = args.gust_t_end
+    if args.delta_times is not None:
+        DELTA_TIMES = args.delta_times
+    if args.delta_angles is not None:
+        DELTA_ANGLES = args.delta_angles
 
     t_f, Fy_f, Mz_f, t_s, h_s, a_s, hd_s, ad_s = reconstruct_structural(args.t_end)
     plot(t_f, Fy_f, Mz_f, t_s, h_s, a_s, hd_s, ad_s, args.t_end, t_start=args.t_start)
