@@ -84,9 +84,12 @@ T_FLAP_START = DELTA_TIMES[-1]
 T_FLAP_END   = DELTA_TIMES[-1]
 
 
-def reconstruct_structural(t_end):
+def reconstruct_structural(t_end, traj_file=None):
     """Read structural trajectory from CSV saved by driver, fallback to force integration."""
-    traj_file = CASE_DIR / "structural_trajectory.csv"
+    if traj_file is None:
+        traj_file = CASE_DIR / "structural_trajectory.csv"
+    else:
+        traj_file = Path(traj_file)
 
     if traj_file.exists():
         print(f"Reading structural trajectory from {traj_file.name} ...")
@@ -287,6 +290,8 @@ def main():
                         help="Flap schedule time knots [s]")
     parser.add_argument("--delta-angles", type=float, nargs="+", default=None,
                         help="Flap schedule angle knots [deg]")
+    parser.add_argument("--traj-file",    type=str,   default=None,
+                        help="Path to structural_trajectory.csv (default: <script_dir>/structural_trajectory.csv)")
     args = parser.parse_args()
 
     # Override gust and flap parameters for annotations if provided
@@ -304,7 +309,11 @@ def main():
     if args.delta_angles is not None:
         DELTA_ANGLES = args.delta_angles
 
-    t_f, Fy_f, Mz_f, t_s, h_s, a_s, hd_s, ad_s, W_gust_s, delta_s = reconstruct_structural(args.t_end)
+    if args.traj_file is not None:
+        global FIG_DIR
+        FIG_DIR = Path(args.traj_file).parent / "figures"
+
+    t_f, Fy_f, Mz_f, t_s, h_s, a_s, hd_s, ad_s, W_gust_s, delta_s = reconstruct_structural(args.t_end, traj_file=args.traj_file)
     plot(t_f, Fy_f, Mz_f, t_s, h_s, a_s, hd_s, ad_s, args.t_end, t_start=args.t_start,
          W_gust_s=W_gust_s, delta_s_csv=delta_s)
 
