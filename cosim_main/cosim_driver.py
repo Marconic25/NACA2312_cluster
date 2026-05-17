@@ -301,7 +301,7 @@ def compute_motion_tables(t_win, h_arr, alpha_arr, t_offset=0.0):
     for i, t in enumerate(t_win):
         a   = alpha_arr[i]
         h   = h_arr[i]
-        d   = np.radians(delta_schedule(t - t_offset))
+        d   = -np.radians(delta_schedule(t - t_offset))  # sign: +delta → flap down → Cl increases
 
         # Hinge position after wing heave+pitch
         dx  = HINGE_X - EA_X
