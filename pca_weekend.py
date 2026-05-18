@@ -1,9 +1,13 @@
 """
-PCA on h(t) and alpha(t) trajectories from dataset_weekend simulations.
+PCA on output trajectories from dataset_weekend simulations.
 
-Goal: verify that the effective dimensionality of (h, alpha) is 2, driven by
-the two input signals W_gust and delta. If the first 2 PCs explain >95% of
-variance and their scores correlate with W_g0 and delta_max, then the LDNet
+Runs two parallel PCA analyses:
+  1. Structural outputs: h(t) and alpha(t)
+  2. Aerodynamic outputs: C_L(t) and C_M(t)  ← direct LDNet targets
+
+Goal: verify that both output spaces have effective dimensionality 2, driven by
+the two input signals W_gust(t) and delta(t). If the first 2 PCs explain >95%
+of variance and their scores correlate with W_g0 and delta_max, then the LDNet
 only needs W and delta as inputs.
 
 Usage:
@@ -46,14 +50,34 @@ def parse_args():
 # Data loading
 # ---------------------------------------------------------------------------
 
-def load_trajectories(meta: pd.DataFrame, data_dir: Path, T: int):
+# Column name aliases for each variable
+COL_ALIASES = {
+    "h":     ("h", "heave"),
+    "alpha": ("alpha", "pitch", "alpha_deg"),
+    "cl":    ("cl", "c_l", "lift_coeff", "cl_total"),
+    "cm":    ("cm", "c_m", "moment_coeff", "cm_total"),
+}
+
+
+def _find_col(df_cols, aliases):
+    return next((c for c in df_cols if c in aliases), None)
+
+
+def load_trajectories(meta: pd.DataFrame, data_dir: Path, T: int,
+                      var1: str, var2: str):
     """
+    Load two output variables from structural_trajectory.csv for each sim.
+
+    Args:
+        var1, var2: keys into COL_ALIASES (e.g. 'h'/'alpha' or 'cl'/'cm')
+
     Returns:
-        X      : ndarray (N, 2*T)  — rows are [h | alpha] for each sim
-        params : DataFrame (N, ...)  — metadata rows that were successfully loaded
+        X      : ndarray (N, 2*T)  — rows are [var1 | var2] for each sim
+        params : DataFrame (N, ...)  — metadata rows successfully loaded
     """
     rows_X = []
     loaded_idx = []
+    aliases1, aliases2 = COL_ALIASES[var1], COL_ALIASES[var2]
 
     for i, row in meta.iterrows():
         traj_path = data_dir / row["sim_name"] / "structural_trajectory.csv"
@@ -62,41 +86,32 @@ def load_trajectories(meta: pd.DataFrame, data_dir: Path, T: int):
             continue
 
         df = pd.read_csv(traj_path)
-
-        # Normalise column names (strip spaces, lowercase)
         df.columns = [c.strip().lower() for c in df.columns]
 
-        # Accept 'h' or 'heave', 'alpha' or 'pitch'
-        h_col = next((c for c in df.columns if c in ("h", "heave")), None)
-        a_col = next((c for c in df.columns if c in ("alpha", "pitch", "alpha_deg")), None)
+        c1 = _find_col(df.columns, aliases1)
+        c2 = _find_col(df.columns, aliases2)
 
-        if h_col is None or a_col is None:
-            print(f"  [skip] {row['sim_name']}: missing h or alpha column "
+        if c1 is None or c2 is None:
+            print(f"  [skip] {row['sim_name']}: missing {var1}/{var2} columns "
                   f"(found: {list(df.columns)})")
             continue
 
-        h = df[h_col].values
-        alpha = df[a_col].values
+        v1 = df[c1].values[:T]
+        v2 = df[c2].values[:T]
 
-        if len(h) < T:
-            print(f"  [warn] {row['sim_name']}: only {len(h)} timesteps, expected {T}; truncating")
-        h = h[:T]
-        alpha = alpha[:T]
+        if len(v1) < T:
+            v1 = np.pad(v1, (0, T - len(v1)), mode="edge")
+            v2 = np.pad(v2, (0, T - len(v2)), mode="edge")
 
-        if len(h) < T:
-            # Pad with last value if still short (should not happen normally)
-            h = np.pad(h, (0, T - len(h)), mode="edge")
-            alpha = np.pad(alpha, (0, T - len(alpha)), mode="edge")
-
-        rows_X.append(np.concatenate([h, alpha]))
+        rows_X.append(np.concatenate([v1, v2]))
         loaded_idx.append(i)
 
     if not rows_X:
-        sys.exit("No simulation data could be loaded. Check --data-dir and sim folder structure.")
+        sys.exit(f"No data loaded for ({var1}, {var2}). Check column names.")
 
-    X = np.array(rows_X)          # (N, 2T)
+    X = np.array(rows_X)
     params = meta.loc[loaded_idx].reset_index(drop=True)
-    print(f"\nLoaded {len(rows_X)} simulations  →  X shape: {X.shape}")
+    print(f"  Loaded {len(rows_X)} sims  →  X shape: {X.shape}")
     return X, params
 
 
@@ -220,34 +235,30 @@ def plot_scores_colored(scores: np.ndarray, params: pd.DataFrame,
     print(f"Saved {out_dir / fname}")
 
 
-def plot_loadings(V: np.ndarray, T: int, out_dir: Path):
-    """Plot the temporal mode shapes for h and alpha for PC1 and PC2."""
-    t = np.arange(T) * 0.002   # dt_save = 0.002 s
+def plot_loadings(V: np.ndarray, T: int, out_dir: Path,
+                  label1: str, label2: str, fname: str):
+    """Plot the temporal mode shapes for two variables for PC1 and PC2."""
+    t = np.arange(T) * 0.002
 
     fig, axes = plt.subplots(2, 2, figsize=(10, 6), sharex=True)
-    titles = ["PC 1 loading", "PC 2 loading"]
-    var_labels = ["h  (m)", "α  (deg)"]
 
     for pc in range(min(2, V.shape[1])):
         v = V[:, pc]
-        h_mode = v[:T]
-        a_mode = v[T:2*T]
-
-        axes[0, pc].plot(t, h_mode, color="#4c8fbd", lw=1.5)
-        axes[0, pc].set_title(titles[pc])
-        axes[0, pc].set_ylabel(var_labels[0])
+        axes[0, pc].plot(t, v[:T], color="#4c8fbd", lw=1.5)
+        axes[0, pc].set_title(f"PC {pc+1} loading")
+        axes[0, pc].set_ylabel(label1)
         axes[0, pc].axhline(0, color="gray", lw=0.8, ls="--")
 
-        axes[1, pc].plot(t, a_mode, color="#e07b39", lw=1.5)
-        axes[1, pc].set_ylabel(var_labels[1])
+        axes[1, pc].plot(t, v[T:2*T], color="#e07b39", lw=1.5)
+        axes[1, pc].set_ylabel(label2)
         axes[1, pc].set_xlabel("Time (s)")
         axes[1, pc].axhline(0, color="gray", lw=0.8, ls="--")
 
-    fig.suptitle("PCA loadings — temporal mode shapes of h and α")
+    fig.suptitle(f"PCA loadings — {label1} and {label2}")
     fig.tight_layout()
-    fig.savefig(out_dir / "loadings.png", dpi=150)
+    fig.savefig(out_dir / fname, dpi=150)
     plt.close(fig)
-    print(f"Saved {out_dir / 'loadings.png'}")
+    print(f"Saved {out_dir / fname}")
 
 
 def plot_scores_by_family(scores: np.ndarray, params: pd.DataFrame, out_dir: Path):
@@ -268,11 +279,10 @@ def plot_scores_by_family(scores: np.ndarray, params: pd.DataFrame, out_dir: Pat
     print(f"Saved {out_dir / 'scores_family.png'}")
 
 
-def pca_per_family(X: np.ndarray, params: pd.DataFrame, T: int, out_dir: Path):
-    """PCA separata per ogni famiglia. Per B1 verifica se delta_max emerge come PC1."""
-    families = params["family"].unique()
-
-    for fam in sorted(families):
+def pca_per_family(X: np.ndarray, params: pd.DataFrame, T: int, out_dir: Path,
+                   label1: str, label2: str, tag: str):
+    """PCA separata per ogni famiglia."""
+    for fam in sorted(params["family"].unique()):
         mask = params["family"].values == fam
         if mask.sum() < 3:
             print(f"  [skip per-family PCA] {fam}: only {mask.sum()} sims, need ≥3")
@@ -281,127 +291,110 @@ def pca_per_family(X: np.ndarray, params: pd.DataFrame, T: int, out_dir: Path):
         X_fam = X[mask]
         params_fam = params[mask].reset_index(drop=True)
         n_comp = min(mask.sum(), 5)
-
         U, evr, V, _ = run_pca(X_fam, n_components=n_comp)
 
-        # Print variance table
-        print(f"\n--- Family {fam} — Explained variance ratio ({mask.sum()} sims) ---")
+        print(f"\n--- Family {fam} [{tag}] — EVR ({mask.sum()} sims) ---")
         print(f"{'PC':>4s}  {'EVR (%)':>8s}  {'Cumulative (%)':>14s}")
         cumsum = 0.0
         for k in range(n_comp):
             cumsum += evr[k] * 100
             print(f"{k+1:>4d}  {evr[k]*100:>8.2f}  {cumsum:>14.2f}")
-
         correlation_table(U, params_fam, n_pc=min(3, n_comp))
 
-        # Scree plot per famiglia
+        # Scree
         fig, ax = plt.subplots(figsize=(5, 3.5))
-        k = np.arange(1, n_comp + 1)
-        ax.bar(k, evr[:n_comp] * 100, color=COLORS_FAM.get(fam, "gray"), alpha=0.8)
-        ax.plot(k, np.cumsum(evr[:n_comp]) * 100, "o-", color="black", lw=1.5)
+        ks = np.arange(1, n_comp + 1)
+        ax.bar(ks, evr[:n_comp] * 100, color=COLORS_FAM.get(fam, "gray"), alpha=0.8)
+        ax.plot(ks, np.cumsum(evr[:n_comp]) * 100, "o-", color="black", lw=1.5)
         ax.axhline(95, ls="--", color="gray", lw=1)
         ax.set_xlabel("PC")
         ax.set_ylabel("Explained variance (%)")
-        ax.set_title(f"Family {fam} — scree plot")
-        ax.set_xticks(k)
+        ax.set_title(f"Family {fam} [{tag}] — scree")
+        ax.set_xticks(ks)
         fig.tight_layout()
-        fname = out_dir / f"scree_{fam}.png"
-        fig.savefig(fname, dpi=150)
+        fig.savefig(out_dir / f"scree_{fam}_{tag}.png", dpi=150)
         plt.close(fig)
-        print(f"Saved {fname}")
+        print(f"Saved {out_dir / f'scree_{fam}_{tag}.png'}")
 
-        # Scores colorati per il parametro più rilevante della famiglia
+        # Scores colorati
         color_col = "W_g0" if fam == "A" else "delta_max" if fam == "B1" else "W_g0"
         color_label = "W_g0 (m/s)" if color_col == "W_g0" else "δ_max (deg)"
-
-        if color_col in params_fam.columns:
+        if color_col in params_fam.columns and U.shape[1] >= 2:
             vals = params_fam[color_col].values.astype(float)
             valid = np.isfinite(vals) & (np.abs(vals) > 1e-10)
-            if valid.sum() >= 2 and U.shape[1] >= 2:
+            if valid.sum() >= 2:
                 fig, ax = plt.subplots(figsize=(5, 4))
                 sc = ax.scatter(U[valid, 0], U[valid, 1],
                                 c=vals[valid], cmap="plasma", s=100, zorder=3)
                 plt.colorbar(sc, ax=ax, label=color_label)
                 ax.set_xlabel("PC 1 score")
                 ax.set_ylabel("PC 2 score")
-                ax.set_title(f"Family {fam} — scores vs {color_label}")
+                ax.set_title(f"Family {fam} [{tag}] — scores vs {color_label}")
                 fig.tight_layout()
-                fname = out_dir / f"scores_{fam}_{color_col}.png"
-                fig.savefig(fname, dpi=150)
+                fig.savefig(out_dir / f"scores_{fam}_{color_col}_{tag}.png", dpi=150)
                 plt.close(fig)
-                print(f"Saved {fname}")
+                print(f"Saved {out_dir / f'scores_{fam}_{color_col}_{tag}.png'}")
 
-        # Loading shapes per famiglia
+        # Loadings
         if U.shape[1] >= 2:
-            t = np.arange(T) * 0.002
-            fig, axes = plt.subplots(2, 2, figsize=(10, 6), sharex=True)
-            for pc in range(2):
-                v = V[:, pc]
-                axes[0, pc].plot(t, v[:T], color="#4c8fbd", lw=1.5)
-                axes[0, pc].set_title(f"PC {pc+1} loading")
-                axes[0, pc].set_ylabel("h (m)")
-                axes[0, pc].axhline(0, color="gray", lw=0.8, ls="--")
-                axes[1, pc].plot(t, v[T:2*T], color="#e07b39", lw=1.5)
-                axes[1, pc].set_ylabel("α (deg)")
-                axes[1, pc].set_xlabel("Time (s)")
-                axes[1, pc].axhline(0, color="gray", lw=0.8, ls="--")
-            fig.suptitle(f"Family {fam} — PCA loadings")
-            fig.tight_layout()
-            fname = out_dir / f"loadings_{fam}.png"
-            fig.savefig(fname, dpi=150)
-            plt.close(fig)
-            print(f"Saved {fname}")
+            plot_loadings(V, T, out_dir, label1, label2,
+                          fname=f"loadings_{fam}_{tag}.png")
 
 
 # ---------------------------------------------------------------------------
 # Main
 # ---------------------------------------------------------------------------
 
-def main():
-    args = parse_args()
-    args.out_dir.mkdir(parents=True, exist_ok=True)
+ANALYSES = [
+    # (var1,  var2,    label1,      label2,       tag)
+    ("h",    "alpha", "h  (m)",    "α  (deg)",   "struct"),
+    ("cl",   "cm",    "C_L  (-)",  "C_M  (-)",   "aero"),
+]
 
-    # Load metadata
-    meta = pd.read_csv(args.metadata)
-    print(f"Metadata: {len(meta)} simulations, columns: {list(meta.columns)}")
 
-    # Load trajectory data
-    X, params = load_trajectories(meta, args.data_dir, args.t_length)
-    N, DIM = X.shape
-    T = args.t_length
+def run_analysis(meta, data_dir, T, out_dir, var1, var2, label1, label2, tag):
+    sub = out_dir / tag
+    sub.mkdir(parents=True, exist_ok=True)
 
-    # PCA
-    n_comp = min(N, 10)
+    print(f"\n{'='*55}")
+    print(f"  ANALYSIS: {label1}  &  {label2}  [{tag}]")
+    print(f"{'='*55}")
+
+    X, params = load_trajectories(meta, data_dir, T, var1, var2)
+    n_comp = min(len(X), 10)
     U, evr, V, _ = run_pca(X, n_components=n_comp)
 
-    # Print variance table
-    print("\n--- Explained variance ratio ---")
+    print(f"\n--- Explained variance ratio [{tag}] ---")
     print(f"{'PC':>4s}  {'EVR (%)':>8s}  {'Cumulative (%)':>14s}")
     cumsum = 0.0
     for k in range(n_comp):
         cumsum += evr[k] * 100
         print(f"{k+1:>4d}  {evr[k]*100:>8.2f}  {cumsum:>14.2f}")
 
-    # Correlation analysis
     correlation_table(U, params, n_pc=min(5, n_comp))
 
-    # Plots
-    plot_scree(evr[:n_comp], args.out_dir)
-    plot_scores_by_family(U, params, args.out_dir)
-
+    plot_scree(evr[:n_comp], sub)
+    plot_scores_by_family(U, params, sub)
     if "W_g0" in params.columns:
-        plot_scores_colored(U, params, "W_g0", "W_g0 (m/s)", "scores_W.png", args.out_dir)
-
+        plot_scores_colored(U, params, "W_g0", "W_g0 (m/s)", "scores_W.png", sub)
     if "delta_max" in params.columns:
-        plot_scores_colored(U, params, "delta_max", "δ_max (deg)", "scores_delta.png", args.out_dir)
+        plot_scores_colored(U, params, "delta_max", "δ_max (deg)", "scores_delta.png", sub)
+    plot_loadings(V, T, sub, label1, label2, fname="loadings.png")
 
-    plot_loadings(V, T, args.out_dir)
+    print(f"\n--- Per-family PCA [{tag}] ---")
+    pca_per_family(X, params, T, sub, label1, label2, tag)
 
-    # Per-family PCA
-    print("\n" + "="*50)
-    print("PER-FAMILY PCA")
-    print("="*50)
-    pca_per_family(X, params, T, args.out_dir)
+
+def main():
+    args = parse_args()
+    args.out_dir.mkdir(parents=True, exist_ok=True)
+
+    meta = pd.read_csv(args.metadata)
+    print(f"Metadata: {len(meta)} simulations, columns: {list(meta.columns)}")
+
+    for var1, var2, label1, label2, tag in ANALYSES:
+        run_analysis(meta, args.data_dir, args.t_length,
+                     args.out_dir, var1, var2, label1, label2, tag)
 
     print(f"\nDone. Results in {args.out_dir}/")
 
