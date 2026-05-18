@@ -50,12 +50,22 @@ def parse_args():
 # Data loading
 # ---------------------------------------------------------------------------
 
+# Aerodynamic reference quantities for coefficient normalisation
+RHO = 1.225       # kg/m³
+U_INF = 80.0      # m/s
+A_REF = 0.25      # m²  (chord 1.0 m × span 0.25 m)
+C_REF = 1.0       # m   (chord, for moment normalisation)
+Q_INF = 0.5 * RHO * U_INF**2   # dynamic pressure [Pa]
+
 # Column name aliases for each variable
 COL_ALIASES = {
     "h":     ("h", "heave"),
     "alpha": ("alpha", "pitch", "alpha_deg"),
     "cl":    ("cl", "c_l", "lift_coeff", "cl_total"),
     "cm":    ("cm", "c_m", "moment_coeff", "cm_total"),
+    # raw forces — converted to coefficients on load
+    "fy":    ("fy", "f_y", "lift", "lift_force"),
+    "mz":    ("mz", "m_z", "moment", "pitch_moment"),
 }
 
 
@@ -69,7 +79,9 @@ def load_trajectories(meta: pd.DataFrame, data_dir: Path, T: int,
     Load two output variables from structural_trajectory.csv for each sim.
 
     Args:
-        var1, var2: keys into COL_ALIASES (e.g. 'h'/'alpha' or 'cl'/'cm')
+        var1, var2: keys into COL_ALIASES (e.g. 'h'/'alpha' or 'cl'/'cm').
+                    If var1='cl' and the file only has 'fy', converts automatically.
+                    Same for var2='cm' / 'mz'.
 
     Returns:
         X      : ndarray (N, 2*T)  — rows are [var1 | var2] for each sim
@@ -77,7 +89,26 @@ def load_trajectories(meta: pd.DataFrame, data_dir: Path, T: int,
     """
     rows_X = []
     loaded_idx = []
-    aliases1, aliases2 = COL_ALIASES[var1], COL_ALIASES[var2]
+
+    # For cl/cm, also accept raw force columns and convert
+    fallback = {"cl": "fy", "cm": "mz"}
+
+    def extract(df, var):
+        aliases = COL_ALIASES[var]
+        col = _find_col(df.columns, aliases)
+        if col is not None:
+            return df[col].values
+        # try force fallback
+        fb = fallback.get(var)
+        if fb:
+            col = _find_col(df.columns, COL_ALIASES[fb])
+            if col is not None:
+                raw = df[col].values
+                if var == "cl":
+                    return raw / (Q_INF * A_REF)
+                if var == "cm":
+                    return raw / (Q_INF * A_REF * C_REF)
+        return None
 
     for i, row in meta.iterrows():
         traj_path = data_dir / row["sim_name"] / "structural_trajectory.csv"
@@ -88,17 +119,16 @@ def load_trajectories(meta: pd.DataFrame, data_dir: Path, T: int,
         df = pd.read_csv(traj_path)
         df.columns = [c.strip().lower() for c in df.columns]
 
-        c1 = _find_col(df.columns, aliases1)
-        c2 = _find_col(df.columns, aliases2)
+        v1 = extract(df, var1)
+        v2 = extract(df, var2)
 
-        if c1 is None or c2 is None:
+        if v1 is None or v2 is None:
             print(f"  [skip] {row['sim_name']}: missing {var1}/{var2} columns "
                   f"(found: {list(df.columns)})")
             continue
 
-        v1 = df[c1].values[:T]
-        v2 = df[c2].values[:T]
-
+        v1 = v1[:T]
+        v2 = v2[:T]
         if len(v1) < T:
             v1 = np.pad(v1, (0, T - len(v1)), mode="edge")
             v2 = np.pad(v2, (0, T - len(v2)), mode="edge")
