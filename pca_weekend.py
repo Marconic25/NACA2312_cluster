@@ -268,6 +268,91 @@ def plot_scores_by_family(scores: np.ndarray, params: pd.DataFrame, out_dir: Pat
     print(f"Saved {out_dir / 'scores_family.png'}")
 
 
+def pca_per_family(X: np.ndarray, params: pd.DataFrame, T: int, out_dir: Path):
+    """PCA separata per ogni famiglia. Per B1 verifica se delta_max emerge come PC1."""
+    families = params["family"].unique()
+
+    for fam in sorted(families):
+        mask = params["family"].values == fam
+        if mask.sum() < 3:
+            print(f"  [skip per-family PCA] {fam}: only {mask.sum()} sims, need ≥3")
+            continue
+
+        X_fam = X[mask]
+        params_fam = params[mask].reset_index(drop=True)
+        n_comp = min(mask.sum(), 5)
+
+        U, evr, V, _ = run_pca(X_fam, n_components=n_comp)
+
+        # Print variance table
+        print(f"\n--- Family {fam} — Explained variance ratio ({mask.sum()} sims) ---")
+        print(f"{'PC':>4s}  {'EVR (%)':>8s}  {'Cumulative (%)':>14s}")
+        cumsum = 0.0
+        for k in range(n_comp):
+            cumsum += evr[k] * 100
+            print(f"{k+1:>4d}  {evr[k]*100:>8.2f}  {cumsum:>14.2f}")
+
+        correlation_table(U, params_fam, n_pc=min(3, n_comp))
+
+        # Scree plot per famiglia
+        fig, ax = plt.subplots(figsize=(5, 3.5))
+        k = np.arange(1, n_comp + 1)
+        ax.bar(k, evr[:n_comp] * 100, color=COLORS_FAM.get(fam, "gray"), alpha=0.8)
+        ax.plot(k, np.cumsum(evr[:n_comp]) * 100, "o-", color="black", lw=1.5)
+        ax.axhline(95, ls="--", color="gray", lw=1)
+        ax.set_xlabel("PC")
+        ax.set_ylabel("Explained variance (%)")
+        ax.set_title(f"Family {fam} — scree plot")
+        ax.set_xticks(k)
+        fig.tight_layout()
+        fname = out_dir / f"scree_{fam}.png"
+        fig.savefig(fname, dpi=150)
+        plt.close(fig)
+        print(f"Saved {fname}")
+
+        # Scores colorati per il parametro più rilevante della famiglia
+        color_col = "W_g0" if fam == "A" else "delta_max" if fam == "B1" else "W_g0"
+        color_label = "W_g0 (m/s)" if color_col == "W_g0" else "δ_max (deg)"
+
+        if color_col in params_fam.columns:
+            vals = params_fam[color_col].values.astype(float)
+            valid = np.isfinite(vals) & (np.abs(vals) > 1e-10)
+            if valid.sum() >= 2 and U.shape[1] >= 2:
+                fig, ax = plt.subplots(figsize=(5, 4))
+                sc = ax.scatter(U[valid, 0], U[valid, 1],
+                                c=vals[valid], cmap="plasma", s=100, zorder=3)
+                plt.colorbar(sc, ax=ax, label=color_label)
+                ax.set_xlabel("PC 1 score")
+                ax.set_ylabel("PC 2 score")
+                ax.set_title(f"Family {fam} — scores vs {color_label}")
+                fig.tight_layout()
+                fname = out_dir / f"scores_{fam}_{color_col}.png"
+                fig.savefig(fname, dpi=150)
+                plt.close(fig)
+                print(f"Saved {fname}")
+
+        # Loading shapes per famiglia
+        if U.shape[1] >= 2:
+            t = np.arange(T) * 0.002
+            fig, axes = plt.subplots(2, 2, figsize=(10, 6), sharex=True)
+            for pc in range(2):
+                v = V[:, pc]
+                axes[0, pc].plot(t, v[:T], color="#4c8fbd", lw=1.5)
+                axes[0, pc].set_title(f"PC {pc+1} loading")
+                axes[0, pc].set_ylabel("h (m)")
+                axes[0, pc].axhline(0, color="gray", lw=0.8, ls="--")
+                axes[1, pc].plot(t, v[T:2*T], color="#e07b39", lw=1.5)
+                axes[1, pc].set_ylabel("α (deg)")
+                axes[1, pc].set_xlabel("Time (s)")
+                axes[1, pc].axhline(0, color="gray", lw=0.8, ls="--")
+            fig.suptitle(f"Family {fam} — PCA loadings")
+            fig.tight_layout()
+            fname = out_dir / f"loadings_{fam}.png"
+            fig.savefig(fname, dpi=150)
+            plt.close(fig)
+            print(f"Saved {fname}")
+
+
 # ---------------------------------------------------------------------------
 # Main
 # ---------------------------------------------------------------------------
@@ -311,6 +396,12 @@ def main():
         plot_scores_colored(U, params, "delta_max", "δ_max (deg)", "scores_delta.png", args.out_dir)
 
     plot_loadings(V, T, args.out_dir)
+
+    # Per-family PCA
+    print("\n" + "="*50)
+    print("PER-FAMILY PCA")
+    print("="*50)
+    pca_per_family(X, params, T, args.out_dir)
 
     print(f"\nDone. Results in {args.out_dir}/")
 
