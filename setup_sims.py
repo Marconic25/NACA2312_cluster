@@ -101,6 +101,10 @@ def build_flap_schedule(row):
             float(row["dt_ramp2"]), float(row["dt_hold2"]),
             t_start,
         )
+    elif law == 5:
+        # Law 5: feed-forward on W_gust — delta computed inside cosim_driver via
+        # --law5-k-eff / --law5-tau / --law5-rate-max. No tabulated schedule needed.
+        return None, None
     else:
         raise ValueError(f"Unknown law: {law}")
 

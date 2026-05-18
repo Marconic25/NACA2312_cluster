@@ -84,8 +84,56 @@ DELTA_TIMES  = [0.0,  2.0]   # [s]
 DELTA_ANGLES = [0.0,  0.0]   # [deg]
 
 
+# Law 5 parameters — feed-forward on W_gust with rate limiting
+# δ_ref(t) = clip(-K_eff * W_g(t - tau), -DELTA_MAX_ABS, +DELTA_MAX_ABS)
+# δ(t)     = rate_limited(δ_ref, DELTA_RATE_MAX)
+LAW = 0                  # 0 = tabulated schedule, 5 = feed-forward gust
+LAW5_K_EFF        = 0.0  # deg/(m/s)
+LAW5_TAU          = 0.0  # s  (controller delay)
+LAW5_RATE_MAX     = 0.0  # deg/s  (actuator rate limit; 0 = unlimited)
+LAW5_DELTA_MAX    = 20.0 # deg  (hard saturation)
+_LAW5_DELTA_TABLE = None # precomputed (t, delta_deg) array — built at startup
+
+
+def _build_law5_table(dt_sim, t_end):
+    """
+    Precompute the rate-limited δ(t) trajectory for law 5.
+
+    Uses Euler integration of the rate limiter:
+        δ̇ = clip(δ_ref - δ, -rate_max, +rate_max) / τ_act   (first-order lag)
+    Here we use a simpler hard rate limiter (no lag dynamics):
+        δ[k+1] = δ[k] + clip(δ_ref[k+1] - δ[k], -rate_max*dt, +rate_max*dt)
+
+    This matches the physical actuator behaviour (max slew rate).
+    rate_max = 0 means unlimited → δ = δ_ref exactly.
+    """
+    global _LAW5_DELTA_TABLE
+    t_arr = np.arange(0.0, t_end + dt_sim, dt_sim)
+    delta = np.zeros(len(t_arr))
+    dt_rate = LAW5_RATE_MAX * dt_sim  # max change per step [deg]
+
+    for k, t in enumerate(t_arr):
+        t_delayed = max(0.0, t - LAW5_TAU)
+        ref = -LAW5_K_EFF * gust_velocity(t_delayed)
+        ref = np.clip(ref, -LAW5_DELTA_MAX, LAW5_DELTA_MAX)
+        if k == 0:
+            delta[k] = ref
+        else:
+            if LAW5_RATE_MAX > 0.0:
+                step = np.clip(ref - delta[k-1], -dt_rate, dt_rate)
+                delta[k] = delta[k-1] + step
+            else:
+                delta[k] = ref
+
+    _LAW5_DELTA_TABLE = (t_arr, delta)
+
+
 def delta_schedule(t):
     """Prescribed flap deflection in degrees at time t."""
+    if LAW == 5:
+        if _LAW5_DELTA_TABLE is None:
+            raise RuntimeError("Law 5 table not built — call _build_law5_table() first")
+        return float(np.interp(t, _LAW5_DELTA_TABLE[0], _LAW5_DELTA_TABLE[1]))
     return float(np.interp(t, DELTA_TIMES, DELTA_ANGLES))
 
 
@@ -861,15 +909,40 @@ def main():
                         help="Flap schedule time knots [s], e.g. --delta-times 0 0.2 0.5 3.0")
     parser.add_argument("--delta-angles", type=float, nargs="+", default=None,
                         help="Flap schedule angle knots [deg], e.g. --delta-angles 0 0 10 10")
+    # Law 5: feed-forward on W_gust with rate limiting
+    parser.add_argument("--law",           type=int,   default=None,
+                        help="Flap law: 0=tabulated (default), 5=feed-forward gust")
+    parser.add_argument("--law5-k-eff",    type=float, default=None,
+                        help="Law 5: feed-forward gain K_eff [deg/(m/s)]")
+    parser.add_argument("--law5-tau",      type=float, default=0.0,
+                        help="Law 5: controller delay tau [s] (default: 0)")
+    parser.add_argument("--law5-rate-max", type=float, default=0.0,
+                        help="Law 5: actuator rate limit [deg/s] (0=unlimited, default: 0)")
     args = parser.parse_args()
 
     # Override gust and flap parameters from CLI if provided
     global GUST_W0, GUST_T_START, GUST_T_END, DELTA_TIMES, DELTA_ANGLES
+    global LAW, LAW5_K_EFF, LAW5_TAU, LAW5_RATE_MAX
     if args.gust_w0      is not None: GUST_W0       = args.gust_w0
     if args.gust_t_start is not None: GUST_T_START  = args.gust_t_start
     if args.gust_t_end   is not None: GUST_T_END    = args.gust_t_end
     if args.delta_times  is not None: DELTA_TIMES   = args.delta_times
     if args.delta_angles is not None: DELTA_ANGLES  = args.delta_angles
+    if args.law          is not None: LAW            = args.law
+    if args.law5_k_eff   is not None: LAW5_K_EFF    = args.law5_k_eff
+    if args.law5_tau     is not None: LAW5_TAU       = args.law5_tau
+    if args.law5_rate_max is not None: LAW5_RATE_MAX = args.law5_rate_max
+
+    # Build law 5 delta table if needed (must happen after gust params are set)
+    if LAW == 5:
+        if LAW5_K_EFF == 0.0:
+            raise ValueError("--law5-k-eff must be set when using --law 5")
+        dt_sim = args.dt if args.dt is not None else read_control_dict_value("deltaT")
+        t_end_pre = args.t_end if args.t_end is not None else read_control_dict_value("endTime")
+        _build_law5_table(dt_sim, t_end_pre)
+        delta_peak = max(abs(_LAW5_DELTA_TABLE[1]))
+        print(f"  Law 5: K_eff={LAW5_K_EFF} deg/(m/s)  τ={LAW5_TAU}s  "
+              f"rate_max={LAW5_RATE_MAX} deg/s  δ_peak≈{delta_peak:.2f}°")
 
     # Structural state
     h, hd, a, ad = 0.0, 0.0, 0.0, 0.0
